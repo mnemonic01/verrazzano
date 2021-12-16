@@ -22,6 +22,7 @@ pipeline {
     }
 
     parameters {
+        booleanParam (description: 'Whether to pause job on failure to allow for debugging it', name: 'PAUSE_JOB_ON_FAILURE', defaultValue: false)
         choice (name: 'KUBERNETES_CLUSTER_VERSION',
                 description: 'Kubernetes Version for KinD Cluster',
                 // 1st choice is the default value
@@ -220,6 +221,13 @@ pipeline {
                     post {
                         failure {
                             archiveArtifacts artifacts: "**/kind-logs/**", allowEmptyArchive: true
+                            script {
+                                if (params.PAUSE_JOB_ON_FAILURE) {
+                                    sh """
+	                                curl -k -u ${JENKINS_READ_USR}:${JENKINS_READ_PSW} ${BUILD_URL}pause/toggle
+                                    """
+                                }
+                            }
                         }
                         always {
                             archiveArtifacts artifacts: "acceptance-test-operator.yaml,downloaded-operator.yaml", allowEmptyArchive: true
