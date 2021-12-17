@@ -221,13 +221,6 @@ pipeline {
                     post {
                         failure {
                             archiveArtifacts artifacts: "**/kind-logs/**", allowEmptyArchive: true
-                            script {
-                                if (params.PAUSE_JOB_ON_FAILURE) {
-                                    sh """
-	                                curl -k -u ${JENKINS_READ_USR}:${JENKINS_READ_PSW} ${BUILD_URL}pause/toggle
-                                    """
-                                }
-                            }
                         }
                         always {
                             archiveArtifacts artifacts: "acceptance-test-operator.yaml,downloaded-operator.yaml", allowEmptyArchive: true
@@ -281,7 +274,7 @@ pipeline {
                             junit testResults: '**/*test-result.xml', allowEmptyResults: true
                         }
                     }
-               }
+                }
 
                 stage('Run Acceptance Tests Infra') {
                     environment {
@@ -497,12 +490,16 @@ pipeline {
                         }
                     }
                 }
-
             }
 
             post {
                 failure {
                     script {
+                        if (params.PAUSE_JOB_ON_FAILURE) {
+                            sh """
+                                curl -k -u ${JENKINS_READ_USR}:${JENKINS_READ_PSW} ${BUILD_URL}pause/toggle
+                            """
+                        }
                         METRICS_PUSHED=metricTimerEnd("${VZ_TEST_METRIC}", '0')
                         if ( fileExists(env.TESTS_EXECUTED_FILE) ) {
                             dumpK8sCluster('new-kind-acceptance-tests-cluster-dump')
