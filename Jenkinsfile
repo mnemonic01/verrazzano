@@ -111,7 +111,10 @@ pipeline {
         OCI_OS_NAMESPACE = credentials('oci-os-namespace')
         OCI_OS_ARTIFACT_BUCKET="build-failure-artifacts"
         OCI_OS_BUCKET="verrazzano-builds"
+
+        // used to emit metrics
         PROMETHEUS_GW_URL = credentials('prometheus-dev-url')
+        PROMETHEUS_CREDENTIALS = credentials('prometheus-credentials')
 
         OCIR_SCAN_COMPARTMENT = credentials('ocir-scan-compartment')
         OCIR_SCAN_TARGET = credentials('ocir-scan-target')
@@ -456,6 +459,12 @@ pipeline {
                 }
             }
 
+            environment {
+                SEARCH_HTTP_ENDPOINT = credentials('search-gw-url')
+                SEARCH_PASSWORD = "${PROMETHEUS_CREDENTIALS_PSW}"
+                SEARCH_USERNAME = "${PROMETHEUS_CREDENTIALS_USR}"
+            }
+
             steps {
                 script {
                     VZ_TEST_METRIC = metricJobName('kind_test')
@@ -740,6 +749,7 @@ def qualityCheck() {
 
         echo "copyright scan"
         time make copyright-check
+        ./ci/scripts/check_if_clean_after_generate.sh
 
         echo "Third party license check"
     """
