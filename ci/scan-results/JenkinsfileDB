@@ -63,8 +63,8 @@ pipeline {
 def install_mysql_client() {
     sh """
         id
-        #yum list installed | grep db
-        #yum list installed | grep mysql
+        sudo yum list installed | grep db
+        sudo yum list installed | grep mysql
         sudo yum install -y mysql
     """
 }
