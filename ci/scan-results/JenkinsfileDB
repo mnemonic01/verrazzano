@@ -48,14 +48,25 @@ pipeline {
         stage('Setup MySQL Bastion Tunnel') {
             steps {
                 script {
+                    install_mysql_client()
                     generate_ssh_keys()
-                    sh "bastion_session_port=${MYSQL_CONNECT_PORT} ci/scripts/lre_setup_ssh_tunnel.sh"
+                    sh """
+                      set +x
+                      bastion_session_port=${MYSQL_CONNECT_PORT} ci/scripts/lre_setup_ssh_tunnel.sh
+                    """
                 }
             }
         }
     }
 }
 
+def install_mysql_client() {
+    sh """
+        yum list installed | grep db
+        yum list installed | grep mysql
+        yum install -y mysql
+    """
+}
 def generate_ssh_keys() {
     sh """
       # delete the key files if they exist
