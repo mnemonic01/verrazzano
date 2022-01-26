@@ -28,7 +28,7 @@ pipeline {
         IMAGE_PULL_SECRET = 'verrazzano-container-registry'
         GOPATH = '/home/opc/go'
         GO_REPO_PATH = "${GOPATH}/src/github.com/verrazzano"
-        dev_lre_compartment_id = credentials('dev-lre-compartment-id')
+        bastion_compartment_id = credentials('dev-lre-compartment-id')
         dev2_lre_compartment_id = credentials('dev2-lre-compartment-id')
         dev2_lre_cluster_id = credentials('dev2-lre-cluster-id')
         dev_lre_bastion_ip = credentials('dev-lre-bastion-ip')
@@ -175,7 +175,7 @@ pipeline {
                     sh '''
                         echo "create ssh tunnel"
                         cd ${GO_REPO_PATH}/verrazzano/
-                        ci/scripts/lre_setup_ssh_tunnel.sh
+                        bastion_session_port=6443 ci/scripts/lre_setup_ssh_tunnel.sh
                         #wait a bit for the tunnel to be setup
                         sleep 60
                         ls -ls ${KUBECONFIG}

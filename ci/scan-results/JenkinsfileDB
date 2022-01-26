@@ -1,0 +1,64 @@
+// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+// Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+
+pipeline {
+    options {
+        timestamps ()
+    }
+
+    agent {
+       docker {
+           image "${RUNNER_DOCKER_IMAGE}"
+           args "${RUNNER_DOCKER_ARGS}"
+           registryUrl "${RUNNER_DOCKER_REGISTRY_URL}"
+           label 'internal'
+       }
+    }
+
+    //triggers { cron("@daily") }
+
+    environment {
+//        CLEAN_BRANCH_NAME = "${env.BRANCH_NAME.replace("/", "%2F")}"
+//
+//        OCI_CLI_TENANCY = credentials('oci-dev-tenancy')
+//        OCI_CLI_USER = credentials('oci-dev-user-ocid')
+//        OCI_CLI_FINGERPRINT = credentials('oci-dev-api-key-fingerprint')
+//        OCI_CLI_KEY_FILE = credentials('oci-dev-api-key-file')
+//        OCI_CLI_REGION = "us-ashburn-1"
+//        OCI_REGION = "${env.OCI_CLI_REGION}"
+//
+//        OCIR_COMPARTMENT_ID = credentials('ocir-scan-compartment')
+//        OCIR_SCAN_REGISTRY = credentials('ocir-scan-registry')
+//        OCIR_REPOSITORY_BASE = credentials('ocir-scan-repository-path')
+//        OCIR_PATH_FILTER = ".*"
+//        DOCKER_SCAN_CREDS = credentials('v8odev-ocir')
+//
+//        OCI_OS_NAMESPACE = credentials('oci-os-namespace')
+//        OCI_OS_BUCKET = "verrazzano-builds"
+//
+//        GITHUB_ACCESS_TOKEN = credentials('github-api-token-release-process')
+        MYSQL_CONNECT_PORT=33060
+        ssh_public_key_path = "${WORKSPACE}/.ssh/id_rsa.pub"
+        ssh_private_key_path = "${WORKSPACE}/.ssh/id_rsa"
+    }
+
+    stages {
+        stage('Setup MySQL Bastion Tunnel') {
+            script {
+                generate_ssh_keys()
+                sh "bastion_session_port=${MYSQL_CONNECT_PORT} ci/scripts/lre_setup_ssh_tunnel.sh"
+            }
+        }
+    }
+}
+
+def generate_ssh_keys() {
+    sh """
+      # delete the key files if they exist
+      rm -f ${WORKSPACE}/.ssh/id_rsa*
+      mkdir -p ${WORKSPACE}/.ssh
+      # call ssh-keygen to create the keys
+      ssh-keygen -m PEM -N '' -f ${ssh_private_key_path}
+      ls -l ${WORKSPACE}/.ssh
+    """
+}
