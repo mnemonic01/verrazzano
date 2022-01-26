@@ -16,6 +16,10 @@ if [ -z "${bastion_compartment_id}" ] ; then
     echo "bastion_compartment_id env var must be set!"
     exit 1
 fi
+if [ -z "${bastion_session_target_ip}" ] ; then
+    echo "bastion_session_target_ip env var must be set!"
+    exit 1
+fi
 if [ -z "${bastion_session_port}" ] ; then
     echo "bastion_session_port env var must be set!"
     exit 1
@@ -37,7 +41,7 @@ fi
 SESSION_ID=$(oci bastion session create-port-forwarding \
    --bastion-id $BASTION_ID \
    --ssh-public-key-file ${ssh_public_key_path} \
-   --target-private-ip 10.196.0.171 \
+   --target-private-ip ${bastion_session_target_ip} \
    --target-port $bastion_session_port | jq '.data.id' | sed s/\"//g)
 
 if [ -z "$SESSION_ID" ]; then

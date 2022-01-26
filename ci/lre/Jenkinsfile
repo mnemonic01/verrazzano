@@ -175,7 +175,7 @@ pipeline {
                     sh '''
                         echo "create ssh tunnel"
                         cd ${GO_REPO_PATH}/verrazzano/
-                        bastion_session_port=6443 ci/scripts/lre_setup_ssh_tunnel.sh
+                        bastion_session_port=6443 bastion_session_target_ip=${dev_lre_bastion_ip} ci/scripts/lre_setup_ssh_tunnel.sh
                         #wait a bit for the tunnel to be setup
                         sleep 60
                         ls -ls ${KUBECONFIG}
