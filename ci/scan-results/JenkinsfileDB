@@ -20,11 +20,11 @@ pipeline {
     environment {
 //        CLEAN_BRANCH_NAME = "${env.BRANCH_NAME.replace("/", "%2F")}"
 //
-//        OCI_CLI_TENANCY = credentials('oci-dev-tenancy')
-//        OCI_CLI_USER = credentials('oci-dev-user-ocid')
-//        OCI_CLI_FINGERPRINT = credentials('oci-dev-api-key-fingerprint')
-//        OCI_CLI_KEY_FILE = credentials('oci-dev-api-key-file')
-//        OCI_CLI_REGION = "us-ashburn-1"
+        OCI_CLI_TENANCY = credentials('oci-dev-tenancy')
+        OCI_CLI_USER = credentials('oci-dev-user-ocid')
+        OCI_CLI_FINGERPRINT = credentials('oci-dev-api-key-fingerprint')
+        OCI_CLI_KEY_FILE = credentials('oci-dev-api-key-file')
+        OCI_CLI_REGION = "us-ashburn-1"
 //        OCI_REGION = "${env.OCI_CLI_REGION}"
 //
 //        OCIR_COMPARTMENT_ID = credentials('ocir-scan-compartment')
