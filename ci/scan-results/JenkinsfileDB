@@ -41,7 +41,7 @@ pipeline {
         ssh_public_key_path = "${WORKSPACE}/.ssh/id_rsa.pub"
         ssh_private_key_path = "${WORKSPACE}/.ssh/id_rsa"
         bastion_compartment_id = credentials('deva-v8odev-sandbox-compartment-id')
-        bastion_session_target_ip = credentials('dev-lre-bastion-ip')
+        bastion_session_target_ip = '10.196.0.119'
     }
 
     stages {
