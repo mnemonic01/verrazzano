@@ -44,9 +44,11 @@ pipeline {
 
     stages {
         stage('Setup MySQL Bastion Tunnel') {
-            script {
-                generate_ssh_keys()
-                sh "bastion_session_port=${MYSQL_CONNECT_PORT} ci/scripts/lre_setup_ssh_tunnel.sh"
+            steps {
+                script {
+                    generate_ssh_keys()
+                    sh "bastion_session_port=${MYSQL_CONNECT_PORT} ci/scripts/lre_setup_ssh_tunnel.sh"
+                }
             }
         }
     }
