@@ -61,12 +61,7 @@ pipeline {
 }
 
 def install_mysql_client() {
-    sh """
-        id
-        sudo yum list installed | grep db
-        sudo yum list installed | grep mysql
-        sudo yum install -y mysql
-    """
+    sh "sudo yum install -y mysql"
 }
 def generate_ssh_keys() {
     sh """
