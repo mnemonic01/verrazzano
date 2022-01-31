@@ -29,7 +29,7 @@ pipeline {
 
         // OCI Object Storage info
         OCI_OS_NAMESPACE = credentials('oci-os-namespace')
-        OCI_OS_SCAN_BUCKET = "verrazzano-scans"
+        OCI_OS_SCAN_BUCKET = "verrazzano-scan-results"
         OCI_OS_REGION="us-phoenix-1"
 //        OCIR_COMPARTMENT_ID = credentials('ocir-scan-compartment')
 //        OCIR_SCAN_REGISTRY = credentials('ocir-scan-registry')
