@@ -17,27 +17,31 @@ pipeline {
 
     //triggers { cron("@daily") }
 
+    parameters {
+        string (name: 'SCAN_RESULTS_CSV_OBJECT_NAME',
+                defaultValue: '',
+                description: 'The object name in OCI object store, for the scan results CSV file',
+                trim: true)
+    }
     environment {
 //        CLEAN_BRANCH_NAME = "${env.BRANCH_NAME.replace("/", "%2F")}"
 //
-        OCI_CLI_TENANCY = credentials('oci-dev-tenancy')
-        OCI_CLI_USER = credentials('oci-dev-user-ocid')
-        OCI_CLI_FINGERPRINT = credentials('oci-dev-api-key-fingerprint')
-        OCI_CLI_KEY_FILE = credentials('oci-dev-api-key-file')
-        OCI_CLI_REGION = "us-ashburn-1"
-//        OCI_REGION = "${env.OCI_CLI_REGION}"
-//
+
+        // OCI Object Storage info
+        OCI_OS_NAMESPACE = credentials('oci-os-namespace')
+        OCI_OS_SCAN_BUCKET = "verrazzano-scans"
+        OCI_OS_REGION="us-phoenix-1"
 //        OCIR_COMPARTMENT_ID = credentials('ocir-scan-compartment')
 //        OCIR_SCAN_REGISTRY = credentials('ocir-scan-registry')
 //        OCIR_REPOSITORY_BASE = credentials('ocir-scan-repository-path')
 //        OCIR_PATH_FILTER = ".*"
 //        DOCKER_SCAN_CREDS = credentials('v8odev-ocir')
 //
-//        OCI_OS_NAMESPACE = credentials('oci-os-namespace')
-//        OCI_OS_BUCKET = "verrazzano-builds"
 //
 //        GITHUB_ACCESS_TOKEN = credentials('github-api-token-release-process')
         MYSQL_CONNECT_PORT=33060
+        MYSQL_LOGIN=credentials('deva-mysql-login')
+        MYSQL_SCHEMA=credentials('deva-mysql-schema')
         ssh_public_key_path = "${WORKSPACE}/.ssh/id_rsa.pub"
         ssh_private_key_path = "${WORKSPACE}/.ssh/id_rsa"
         bastion_compartment_id = credentials('deva-v8odev-sandbox-compartment-id')
@@ -45,7 +49,25 @@ pipeline {
     }
 
     stages {
+        stage('Validate Parameters') {
+            steps {
+                script {
+                    if (!params.SCAN_RESULTS_CSV_OBJECT_NAME) {
+                        error('Parameter SCAN_RESULTS_CSV_OBJECT_NAME must be provided!')
+                    }
+                }
+            }
+        }
+
         stage('Setup MySQL Bastion Tunnel') {
+            environment {
+                // Database is in dev tenancy
+                OCI_CLI_TENANCY = credentials('oci-dev-tenancy')
+                OCI_CLI_USER = credentials('oci-dev-user-ocid')
+                OCI_CLI_FINGERPRINT = credentials('oci-dev-api-key-fingerprint')
+                OCI_CLI_KEY_FILE = credentials('oci-dev-api-key-file')
+                OCI_CLI_REGION = "us-ashburn-1"
+            }
             steps {
                 script {
                     install_mysql_client()
@@ -53,6 +75,38 @@ pipeline {
                     sh """
                       set +x
                       bastion_session_port=${MYSQL_CONNECT_PORT} ci/scripts/lre_setup_ssh_tunnel.sh
+                    """
+                }
+            }
+        }
+
+        stage('Download Scan Results') {
+            environment {
+                // CSV is retrieved from object store the non-dev tenancy
+                OCI_CLI_TENANCY = credentials('oci-tenancy')
+                OCI_CLI_USER = credentials('oci-user-ocid')
+                OCI_CLI_FINGERPRINT = credentials('oci-api-key-fingerprint')
+                OCI_CLI_KEY_FILE = credentials('oci-api-key')
+                OCI_CLI_REGION = "us-phoenix-1"
+            }
+            steps {
+                script {
+                    sh """
+                        oci --region $OCI_OS_REGION os object get --namespace ${OCI_OS_NAMESPACE} \
+                            -bn ${OCI_OS_SCAN_BUCKET} --name ${params.SCAN_RESULTS_CSV_OBJECT_NAME} \
+                            --file ${WORKSPACE}/scan_results.csv
+                        tail -5 ${WORKSPACE}/scan_results.csv
+                    """
+                }
+            }
+        }
+
+        stage('Load Scan Results in DB') {
+            steps {
+                script {
+                    sh """
+                      echo select * from ${MSQL_SCHEMA}.CONSOLIDATED_SCAN_RESULTS; > select.sql 
+                      mysql -u ${MYSQL_LOGIN_USR} -p${MYSQL_LOGIN_PWD} -f select.sql
                     """
                 }
             }
