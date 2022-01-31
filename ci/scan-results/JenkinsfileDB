@@ -59,27 +59,6 @@ pipeline {
             }
         }
 
-        stage('Setup MySQL Bastion Tunnel') {
-            environment {
-                // Database is in dev tenancy
-                OCI_CLI_TENANCY = credentials('oci-dev-tenancy')
-                OCI_CLI_USER = credentials('oci-dev-user-ocid')
-                OCI_CLI_FINGERPRINT = credentials('oci-dev-api-key-fingerprint')
-                OCI_CLI_KEY_FILE = credentials('oci-dev-api-key-file')
-                OCI_CLI_REGION = "us-ashburn-1"
-            }
-            steps {
-                script {
-                    install_mysql_client()
-                    generate_ssh_keys()
-                    sh """
-                      set +x
-                      bastion_session_port=${MYSQL_CONNECT_PORT} ci/scripts/lre_setup_ssh_tunnel.sh
-                    """
-                }
-            }
-        }
-
         stage('Download Scan Results') {
             environment {
                 // CSV is retrieved from object store the non-dev tenancy
@@ -96,6 +75,27 @@ pipeline {
                             -bn ${OCI_OS_SCAN_BUCKET} --name ${params.SCAN_RESULTS_CSV_OBJECT_NAME} \
                             --file ${WORKSPACE}/scan_results.csv
                         tail -5 ${WORKSPACE}/scan_results.csv
+                    """
+                }
+            }
+        }
+
+        stage('Setup MySQL Bastion Tunnel') {
+            environment {
+                // Database is in dev tenancy
+                OCI_CLI_TENANCY = credentials('oci-dev-tenancy')
+                OCI_CLI_USER = credentials('oci-dev-user-ocid')
+                OCI_CLI_FINGERPRINT = credentials('oci-dev-api-key-fingerprint')
+                OCI_CLI_KEY_FILE = credentials('oci-dev-api-key-file')
+                OCI_CLI_REGION = "us-ashburn-1"
+            }
+            steps {
+                script {
+                    install_mysql_client()
+                    generate_ssh_keys()
+                    sh """
+                      set +x
+                      bastion_session_port=${MYSQL_CONNECT_PORT} ci/scripts/lre_setup_ssh_tunnel.sh
                     """
                 }
             }
