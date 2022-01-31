@@ -106,7 +106,7 @@ pipeline {
                 script {
                     sh """
                       echo select * from ${MYSQL_SCHEMA}.CONSOLIDATED_SCAN_RESULTS; > select.sql 
-                      mysql -u ${MYSQL_LOGIN_USR} -p${MYSQL_LOGIN_PWD} -f select.sql
+                      mysql -u ${MYSQL_LOGIN_USR} -p${MYSQL_LOGIN_PSW} -f select.sql
                     """
                 }
             }
