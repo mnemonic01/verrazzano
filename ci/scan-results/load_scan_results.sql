@@ -1,3 +1,6 @@
+-- Copyright (c) 2022, Oracle and/or its affiliates.
+-- Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+
 TRUNCATE TABLE CONSOLIDATED_SCAN_RESULT;
 
 LOAD DATA LOCAL INFILE '%CSVFILE%'

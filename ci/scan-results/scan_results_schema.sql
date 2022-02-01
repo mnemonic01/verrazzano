@@ -1,3 +1,6 @@
+-- Copyright (c) 2022, Oracle and/or its affiliates.
+-- Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+
 -- Each row represents a daily scan job that ran in Jenkins, and that produced results for all releases on a specific branch
 CREATE TABLE SCAN_JOB (
                           ID INT NOT NULL AUTO_INCREMENT PRIMARY KEY,

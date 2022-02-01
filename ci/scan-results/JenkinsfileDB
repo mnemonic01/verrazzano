@@ -1,4 +1,4 @@
-// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
+// Copyright (c) 2022, Oracle and/or its affiliates.
 // Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
 
 pipeline {
@@ -108,7 +108,8 @@ pipeline {
                       # echo "select * from ${MYSQL_SCHEMA}.CONSOLIDATED_SCAN_RESULTS;" > select.sql
                       # --local-infile setting seems specific to the Linux mariadb client. 
                       # For other mysql clients use --load-data-local-dir=<dir name>
-                      ls -l
+                      # This setting is to give us permission to use LOAD DATA to 
+                      # bulk load from a client-side CSV file into the remote DB
                       sed -i "s|%CSVFILE%|${WORKSPACE}/scan_results.csv|g" ${WORKSPACE}/ci/scan-results/load_scan_results.sql
                       cat ${WORKSPACE}/ci/scan-results/load_scan_results.sql
                       mysql --local-infile \
