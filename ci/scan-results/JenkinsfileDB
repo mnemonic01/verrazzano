@@ -109,7 +109,7 @@ pipeline {
                       # --local-infile setting seems specific to the Linux mariadb client. 
                       # For other mysql clients use --load-data-local-dir=<dir name>
                       ls -l
-                      sed -i "s|CSVFILE|${WORKSPACE}/consolidated.csv|g" ${WORKSPACE}/ci/scan-results/load_scan_results.sql
+                      sed -i "s|%CSVFILE%|${WORKSPACE}/consolidated.csv|g" ${WORKSPACE}/ci/scan-results/load_scan_results.sql
                       cat ${WORKSPACE}/ci/scan-results/load_scan_results.sql
                       mysql --local-infile \
                         -u ${MYSQL_LOGIN_USR} -p${MYSQL_LOGIN_PSW} -h 127.0.0.1 \
