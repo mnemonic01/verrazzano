@@ -127,8 +127,11 @@ pipeline {
                           SCAN_TARGET = @target;
 EOF
                       # echo "select * from ${MYSQL_SCHEMA}.CONSOLIDATED_SCAN_RESULTS;" > select.sql
-                      mysql -u ${MYSQL_LOGIN_USR} -p${MYSQL_LOGIN_PSW} -h 127.0.0.1 \
-                        --load-data-local-dir=${WORKSPACE} ${MYSQL_SCHEMA} < ${WORKSPACE}/load.sql
+                      # --local-infile setting seems specific to the Linux mariadb client. 
+                      # For other mysql clients use --load-data-local-dir=<dir name>
+                      mysql --local-infile \
+                        -u ${MYSQL_LOGIN_USR} -p${MYSQL_LOGIN_PSW} -h 127.0.0.1 \
+                        ${MYSQL_SCHEMA} < ${WORKSPACE}/load.sql
                     """
                 }
             }
