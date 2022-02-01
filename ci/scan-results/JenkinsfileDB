@@ -39,7 +39,7 @@ pipeline {
 //
 //
 //        GITHUB_ACCESS_TOKEN = credentials('github-api-token-release-process')
-        MYSQL_CONNECT_PORT=33060
+        MYSQL_CONNECT_PORT=3306
         MYSQL_LOGIN=credentials('deva-mysql-login')
         MYSQL_SCHEMA=credentials('deva-mysql-schema')
         ssh_public_key_path = "${WORKSPACE}/.ssh/id_rsa.pub"
