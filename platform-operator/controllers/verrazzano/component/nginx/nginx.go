@@ -1,4 +1,4 @@
-// Copyright (c) 2021, Oracle and/or its affiliates.
+// Copyright (c) 2021, 2022, Oracle and/or its affiliates.
 // Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
 
 package nginx
@@ -6,6 +6,7 @@ package nginx
 import (
 	"context"
 	"fmt"
+
 	"github.com/verrazzano/verrazzano/pkg/bom"
 	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 	vpoconst "github.com/verrazzano/verrazzano/platform-operator/constants"
@@ -22,9 +23,6 @@ import (
 )
 
 const (
-	// ComponentNamespace is the NGINX namespace for verrazzano
-	ComponentNamespace = "ingress-nginx"
-
 	// ValuesFileOverride Name of the values file override for NGINX
 	ValuesFileOverride = "ingress-nginx-values.yaml"
 
@@ -32,12 +30,13 @@ const (
 	backendName    = "ingress-controller-ingress-nginx-defaultbackend"
 )
 
-func IsReady(context spi.ComponentContext, name string, namespace string) bool {
+func isNginxReady(context spi.ComponentContext) bool {
 	deployments := []types.NamespacedName{
-		{Name: ControllerName, Namespace: namespace},
-		{Name: backendName, Namespace: namespace},
+		{Name: ControllerName, Namespace: ComponentNamespace},
+		{Name: backendName, Namespace: ComponentNamespace},
 	}
-	return status.DeploymentsReady(context.Log(), context.Client(), deployments, 1)
+	prefix := fmt.Sprintf("Component %s", context.GetComponent())
+	return status.DeploymentsReady(context.Log(), context.Client(), deployments, 1, prefix)
 }
 
 func AppendOverrides(context spi.ComponentContext, _ string, _ string, _ string, kvs []bom.KeyValue) ([]bom.KeyValue, error) {
@@ -63,10 +62,10 @@ func AppendOverrides(context spi.ComponentContext, _ string, _ string, _ string,
 // PreInstall Create and label the NGINX namespace, and create any override helm args needed
 func PreInstall(compContext spi.ComponentContext, name string, namespace string, dir string) error {
 	if compContext.IsDryRun() {
-		compContext.Log().Infof("NGINX PostInstall dry run")
+		compContext.Log().Debug("NGINX PostInstall dry run")
 		return nil
 	}
-	compContext.Log().Infof("Adding label needed by network policies to ingress-nginx namespace")
+	compContext.Log().Debug("Adding label needed by network policies to ingress-nginx namespace")
 	ns := v1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
 	if _, err := controllerruntime.CreateOrUpdate(context.TODO(), compContext.Client(), &ns, func() error {
 		if ns.Labels == nil {
@@ -84,7 +83,7 @@ func PreInstall(compContext spi.ComponentContext, name string, namespace string,
 // PostInstall Patch the controller service ports based on any user-supplied overrides
 func PostInstall(ctx spi.ComponentContext, _ string, _ string) error {
 	if ctx.IsDryRun() {
-		ctx.Log().Infof("NGINX PostInstall dry run")
+		ctx.Log().Debug("NGINX PostInstall dry run")
 		return nil
 	}
 	// Add any port specs needed to the service after boot

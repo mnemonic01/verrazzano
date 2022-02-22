@@ -27,17 +27,19 @@ const (
 
 type (
 	YAMLApplier struct {
-		client  crtpkg.Client
-		objects []unstructured.Unstructured
+		client            crtpkg.Client
+		objects           []unstructured.Unstructured
+		namespaceOverride string
 	}
 
 	action func(obj *unstructured.Unstructured) error
 )
 
-func NewYAMLApplier(client crtpkg.Client) *YAMLApplier {
+func NewYAMLApplier(client crtpkg.Client, namespaceOverride string) *YAMLApplier {
 	return &YAMLApplier{
-		client:  client,
-		objects: []unstructured.Unstructured{},
+		client:            client,
+		objects:           []unstructured.Unstructured{},
+		namespaceOverride: namespaceOverride,
 	}
 }
 
@@ -76,6 +78,20 @@ func (y *YAMLApplier) ApplyFT(filePath string, args map[string]interface{}) erro
 	return y.doTemplatedFileAction(filePath, y.applyAction, args)
 }
 
+// ApplyFTDefaultConfig calls ApplyFT with rest client from the default config
+func (y *YAMLApplier) ApplyFTDefaultConfig(filePath string, args map[string]interface{}) error {
+	config, err := GetKubeConfig()
+	if err != nil {
+		return err
+	}
+	client, err := crtpkg.New(config, crtpkg.Options{})
+	if err != nil {
+		return err
+	}
+	y.client = client
+	return y.ApplyFT(filePath, args)
+}
+
 //DeleteF deletes a file spec from Kubernetes
 func (y *YAMLApplier) DeleteF(filePath string) error {
 	return y.doFileAction(filePath, y.deleteAction)
@@ -86,8 +102,26 @@ func (y *YAMLApplier) DeleteFT(filePath string, args map[string]interface{}) err
 	return y.doTemplatedFileAction(filePath, y.deleteAction, args)
 }
 
+// DeleteFTDefaultConfig calls deleteFT with rest client from the default config
+func (y *YAMLApplier) DeleteFTDefaultConfig(filePath string, args map[string]interface{}) error {
+	config, err := GetKubeConfig()
+	if err != nil {
+		return err
+	}
+	client, err := crtpkg.New(config, crtpkg.Options{})
+	if err != nil {
+		return err
+	}
+	y.client = client
+	return y.DeleteFT(filePath, args)
+}
+
 //applyAction creates a merge patch of the object with the server object
 func (y *YAMLApplier) applyAction(obj *unstructured.Unstructured) error {
+	var ns = strings.TrimSpace(y.namespaceOverride)
+	if len(ns) > 0 {
+		obj.SetNamespace(ns)
+	}
 	clientSpec, _, err := unstructured.NestedFieldCopy(obj.Object, specField)
 	if err != nil {
 		return err
@@ -97,7 +131,9 @@ func (y *YAMLApplier) applyAction(obj *unstructured.Unstructured) error {
 		if err != nil {
 			return err
 		}
-		merge(serverSpec.(map[string]interface{}), clientSpec.(map[string]interface{}))
+		if clientSpec != nil {
+			merge(serverSpec.(map[string]interface{}), clientSpec.(map[string]interface{}))
+		}
 		return unstructured.SetNestedField(obj.Object, serverSpec, specField)
 	}); err != nil {
 		return err
@@ -108,6 +144,10 @@ func (y *YAMLApplier) applyAction(obj *unstructured.Unstructured) error {
 
 //deleteAction deletes the object from the server
 func (y *YAMLApplier) deleteAction(obj *unstructured.Unstructured) error {
+	var ns = strings.TrimSpace(y.namespaceOverride)
+	if len(ns) > 0 {
+		obj.SetNamespace(ns)
+	}
 	if err := y.client.Delete(context.TODO(), obj); err != nil {
 		if !errors.IsNotFound(err) {
 			return err
@@ -198,8 +238,10 @@ func (y *YAMLApplier) unmarshall(reader *bufio.Reader) ([]unstructured.Unstructu
 			}
 		} else {
 			// Save line to buffer
-			if _, err := buffer.Write(line); err != nil {
-				return objs, err
+			if !strings.HasPrefix(lineStr, "#") && len(strings.TrimSpace(lineStr)) > 0 {
+				if _, err := buffer.Write(line); err != nil {
+					return objs, err
+				}
 			}
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
 	vpClient "github.com/verrazzano/verrazzano/application-operator/clients/clusters/clientset/versioned"
 	"github.com/verrazzano/verrazzano/pkg/k8sutil"
 	"github.com/verrazzano/verrazzano/pkg/semver"
@@ -52,7 +53,7 @@ func DoesCRDExist(crdName string) (bool, error) {
 
 	crds, err := apixClient.CustomResourceDefinitions().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("Failed to get CRDS with error: %v", err))
+		Log(Error, fmt.Sprintf("Failed to get CRDS: %v", err))
 		return false, err
 	}
 
@@ -69,7 +70,7 @@ func DoesCRDExist(crdName string) (bool, error) {
 func DoesNamespaceExist(name string) (bool, error) {
 	kubeconfigPath, err := k8sutil.GetKubeConfigLocation()
 	if err != nil {
-		Log(Error, fmt.Sprintf("Error getting kubeconfig, error: %v", err))
+		Log(Error, fmt.Sprintf("Failed getting kubeconfig: %v", err))
 		return false, err
 	}
 
@@ -86,7 +87,7 @@ func DoesNamespaceExistInCluster(name string, kubeconfigPath string) (bool, erro
 
 	namespace, err := clientset.CoreV1().Namespaces().Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil && !k8serrors.IsNotFound(err) {
-		Log(Error, fmt.Sprintf("Failed to get namespace %s with error: %v", name, err))
+		Log(Error, fmt.Sprintf("Failed to get namespace %s: %v", name, err))
 		return false, err
 	}
 
@@ -121,10 +122,40 @@ func ListDeployments(namespace string) (*appsv1.DeploymentList, error) {
 
 	deployments, err := clientset.AppsV1().Deployments(namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("Failed to list deployments in namespace %s with error: %v", namespace, err))
+		Log(Error, fmt.Sprintf("Failed to list deployments in namespace %s: %v", namespace, err))
 		return nil, err
 	}
 	return deployments, nil
+}
+
+// GetDeployment returns a deployment with the given name and namespace
+func GetDeployment(namespace string, deploymentName string) (*appsv1.Deployment, error) {
+	// Get the Kubernetes clientset
+	clientSet, err := k8sutil.GetKubernetesClientset()
+	if err != nil {
+		return nil, err
+	}
+	deployment, err := clientSet.AppsV1().Deployments(namespace).Get(context.TODO(), deploymentName, metav1.GetOptions{})
+	if err != nil {
+		Log(Error, fmt.Sprintf("Failed to get Deployment %s from namespace %s: %v ", deploymentName, namespace, err))
+		return nil, err
+	}
+	return deployment, nil
+}
+
+// DoesDeploymentExist returns whether a deployment with the given name and namespace exists for the cluster
+func DoesDeploymentExist(namespace string, name string) (bool, error) {
+	deployments, err := ListDeployments(namespace)
+	if err != nil {
+		Log(Error, fmt.Sprintf("Failed listing deployments in cluster for namespace %s: %v", namespace, err))
+		return false, err
+	}
+	for i := range deployments.Items {
+		if strings.HasPrefix(deployments.Items[i].Name, name) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ListNodes returns the list of nodes for the cluster
@@ -137,7 +168,7 @@ func ListNodes() (*corev1.NodeList, error) {
 
 	nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("Failed to list nodes with error: %v", err))
+		Log(Error, fmt.Sprintf("Failed to list nodes: %v", err))
 		return nil, err
 	}
 	return nodes, nil
@@ -175,7 +206,7 @@ func DoesPodExist(namespace string, name string) (bool, error) {
 	}
 	pods, err := ListPodsInCluster(namespace, clientset)
 	if err != nil {
-		Log(Error, fmt.Sprintf("Error listing pods in cluster for namespace: %s, error: %v", namespace, err))
+		Log(Error, fmt.Sprintf("Failed listing pods in cluster for namespace: %s: %v", namespace, err))
 		return false, err
 	}
 	for i := range pods.Items {
@@ -267,7 +298,7 @@ func GetVerrazzanoInstallResourceInCluster(kubeconfigPath string) (*v1alpha1.Ver
 func IsDevProfile() bool {
 	kubeconfigPath, err := k8sutil.GetKubeConfigLocation()
 	if err != nil {
-		Log(Error, fmt.Sprintf("Error getting kubeconfig, error: %v", err))
+		Log(Error, fmt.Sprintf("Error getting kubeconfig: %v", err))
 		return false
 	}
 
@@ -285,7 +316,7 @@ func IsDevProfile() bool {
 func GetVerrazzanoVersion() (string, error) {
 	kubeconfigPath, err := k8sutil.GetKubeConfigLocation()
 	if err != nil {
-		Log(Error, fmt.Sprintf("Error getting kubeconfig, error: %v", err))
+		Log(Error, fmt.Sprintf("Error getting kubeconfig: %v", err))
 		return "", err
 	}
 	vz, err := GetVerrazzanoInstallResourceInCluster(kubeconfigPath)
@@ -323,7 +354,7 @@ func IsVerrazzanoMinVersion(minVersion string) (bool, error) {
 func IsProdProfile() bool {
 	kubeconfigPath, err := k8sutil.GetKubeConfigLocation()
 	if err != nil {
-		Log(Error, fmt.Sprintf("Error getting kubeconfig, error: %v", err))
+		Log(Error, fmt.Sprintf("Error getting kubeconfig: %v", err))
 		return false
 	}
 
@@ -341,7 +372,7 @@ func IsProdProfile() bool {
 func IsManagedClusterProfile() bool {
 	kubeconfigPath, err := k8sutil.GetKubeConfigLocation()
 	if err != nil {
-		Log(Error, fmt.Sprintf("Error getting kubeconfig, error: %v", err))
+		Log(Error, fmt.Sprintf("Error getting kubeconfig: %v", err))
 		return false
 	}
 
@@ -371,7 +402,7 @@ func GetACMEEnvironment(kubeconfigPath string) (string, error) {
 func IsCoherenceOperatorEnabled(kubeconfigPath string) bool {
 	vz, err := GetVerrazzanoInstallResourceInCluster(kubeconfigPath)
 	if err != nil {
-		Log(Error, fmt.Sprintf("Error getting kubeconfig, error: %v", err))
+		Log(Error, fmt.Sprintf("Error getting kubeconfig: %v", err))
 		return true
 	}
 	if vz.Spec.Components.CoherenceOperator == nil || vz.Spec.Components.CoherenceOperator.Enabled == nil {
@@ -384,7 +415,7 @@ func IsCoherenceOperatorEnabled(kubeconfigPath string) bool {
 func IsWebLogicOperatorEnabled(kubeconfigPath string) bool {
 	vz, err := GetVerrazzanoInstallResourceInCluster(kubeconfigPath)
 	if err != nil {
-		Log(Error, fmt.Sprintf("Error Verrazzano Resource, error: %v", err))
+		Log(Error, fmt.Sprintf("Error Verrazzano Resource: %v", err))
 		return true
 	}
 	if vz.Spec.Components.WebLogicOperator == nil || vz.Spec.Components.WebLogicOperator.Enabled == nil {
@@ -413,7 +444,7 @@ func ListServices(namespace string) (*corev1.ServiceList, error) {
 
 	services, err := clientset.CoreV1().Services(namespace).List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("Failed to list services in namespace %s with error: %v", namespace, err))
+		Log(Error, fmt.Sprintf("Failed to list services in namespace %s: %v", namespace, err))
 		return nil, err
 	}
 	return services, nil
@@ -428,6 +459,11 @@ func GetNamespace(name string) (*corev1.Namespace, error) {
 	}
 
 	return clientset.CoreV1().Namespaces().Get(context.TODO(), name, metav1.GetOptions{})
+}
+
+// GenerateNamespace takes a string and combines that with a UUID to generate a namespace
+func GenerateNamespace(name string) string {
+	return name + "-" + uuid.NewString()[:7]
 }
 
 // GetEffectiveKeyCloakPersistenceOverride returns the effective PVC override for Keycloak, if it exists
@@ -545,7 +581,7 @@ func DeleteNamespace(name string) error {
 
 	kubeconfigPath, err := k8sutil.GetKubeConfigLocation()
 	if err != nil {
-		Log(Error, fmt.Sprintf("Error getting kubeconfig, error: %v", err))
+		Log(Error, fmt.Sprintf("Error getting kubeconfig: %v", err))
 		return err
 	}
 
@@ -560,7 +596,7 @@ func DeleteNamespaceInCluster(name string, kubeconfigPath string) error {
 	}
 	err = clientset.CoreV1().Namespaces().Delete(context.TODO(), name, metav1.DeleteOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("DeleteNamespace %s error: %v", name, err))
+		Log(Error, fmt.Sprintf("Failed to delete namespace %s: %v", name, err))
 	}
 
 	return err
@@ -576,7 +612,7 @@ func DoesClusterRoleExist(name string) (bool, error) {
 
 	clusterrole, err := clientset.RbacV1().ClusterRoles().Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil && !k8serrors.IsNotFound(err) {
-		Log(Error, fmt.Sprintf("Failed to get cluster role %s with error: %v", name, err))
+		Log(Error, fmt.Sprintf("Failed to get cluster role %s: %v", name, err))
 		return false, err
 	}
 
@@ -593,7 +629,7 @@ func GetClusterRole(name string) (*rbacv1.ClusterRole, error) {
 
 	clusterrole, err := clientset.RbacV1().ClusterRoles().Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("Failed to get cluster role %s with error: %v", name, err))
+		Log(Error, fmt.Sprintf("Failed to get cluster role %s: %v", name, err))
 		return nil, err
 	}
 
@@ -619,7 +655,7 @@ func DoesClusterRoleBindingExist(name string) (bool, error) {
 
 	clusterrolebinding, err := clientset.RbacV1().ClusterRoleBindings().Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil && !k8serrors.IsNotFound(err) {
-		Log(Error, fmt.Sprintf("Failed to get cluster role binding %s with error: %v", name, err))
+		Log(Error, fmt.Sprintf("Failed to get cluster role binding %s: %v", name, err))
 		return false, err
 	}
 
@@ -636,7 +672,7 @@ func GetClusterRoleBinding(name string) (*rbacv1.ClusterRoleBinding, error) {
 
 	crb, err := clientset.RbacV1().ClusterRoleBindings().Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("Failed to get cluster role binding %s with error: %v", name, err))
+		Log(Error, fmt.Sprintf("Failed to get cluster role binding %s: %v", name, err))
 		return nil, err
 	}
 
@@ -653,7 +689,7 @@ func ListClusterRoleBindings() (*rbacv1.ClusterRoleBindingList, error) {
 
 	bindings, err := clientset.RbacV1().ClusterRoleBindings().List(context.TODO(), metav1.ListOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("Failed to get cluster role bindings with error: %v", err))
+		Log(Error, fmt.Sprintf("Failed to get cluster role bindings: %v", err))
 		return nil, err
 	}
 
@@ -735,7 +771,7 @@ func DoesRoleBindingExist(name string, namespace string) (bool, error) {
 
 	rolebinding, err := clientset.RbacV1().RoleBindings(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil {
-		Log(Info, fmt.Sprintf("Failed to verify role binding %s in namespace %s with error: %v", name, namespace, err))
+		Log(Info, fmt.Sprintf("Failed to verify role binding %s in namespace %s: %v", name, namespace, err))
 		return false, err
 	}
 
@@ -786,7 +822,7 @@ func GetConfigMap(configMapName string, namespace string) (*corev1.ConfigMap, er
 	cmi := clientset.CoreV1().ConfigMaps(namespace)
 	configMap, err := cmi.Get(context.TODO(), configMapName, metav1.GetOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("Failed to get Config Map %v from namespace %v:  Error = %v ", configMapName, namespace, err))
+		Log(Error, fmt.Sprintf("Failed to get Config Map %s from namespace %s: %v ", configMapName, namespace, err))
 		return nil, err
 	}
 	return configMap, nil
@@ -871,7 +907,7 @@ func CanIForAPIGroupForServiceAccountOrUser(saOrUserOCID string, namespace strin
 			&clientcmd.ConfigOverrides{ClusterInfo: clientcmdapi.Cluster{Server: ""}})
 		rawConfig, err := clientConfig.RawConfig()
 		if err != nil {
-			return false, "", fmt.Errorf("could not get rawconfig, error %v", err)
+			return false, "", fmt.Errorf("could not get rawconfig: %v", err)
 		}
 
 		rawConfig.AuthInfos["sa-token"] = &clientcmdapi.AuthInfo{Token: string(token)}
@@ -938,7 +974,7 @@ func GetTokenForServiceAccount(sa string, namespace string) ([]byte, error) {
 	}
 	secret, err := clientset.CoreV1().Secrets(namespace).Get(context.TODO(), secretName, metav1.GetOptions{})
 	if err != nil {
-		msg := fmt.Sprintf("failed to get secret %s for service account %s in namespace %s with error: %v", secretName, sa, namespace, err)
+		msg := fmt.Sprintf("failed to get secret %s for service account %s in namespace %s: %v", secretName, sa, namespace, err)
 		Log(Error, msg)
 		return nil, errors.New(msg)
 	}
@@ -946,7 +982,7 @@ func GetTokenForServiceAccount(sa string, namespace string) ([]byte, error) {
 	token, ok := secret.Data["token"]
 
 	if !ok {
-		msg := fmt.Sprintf("no token present in secret %s for service account %s in namespace %s with error: %v", secretName, sa, namespace, err)
+		msg := fmt.Sprintf("no token present in secret %s for service account %s in namespace %s: %v", secretName, sa, namespace, err)
 		Log(Error, msg)
 		return nil, errors.New(msg)
 	}
@@ -961,7 +997,7 @@ func GetServiceAccount(namespace, name string) (*corev1.ServiceAccount, error) {
 	}
 	sa, err := clientset.CoreV1().ServiceAccounts(namespace).Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil {
-		Log(Error, fmt.Sprintf("Failed to get service account %s in namespace %s with error: %v", name, namespace, err))
+		Log(Error, fmt.Sprintf("Failed to get service account %s in namespace %s: %v", name, namespace, err))
 		return nil, err
 	}
 	return sa, nil
@@ -995,7 +1031,7 @@ func DoesVerrazzanoProjectExistInCluster(name string, kubeconfigPath string) (bo
 
 	vp, err := clientset.ClustersV1alpha1().VerrazzanoProjects("verrazzano-mc").Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil && !k8serrors.IsNotFound(err) {
-		Log(Error, fmt.Sprintf("Failed to get VerrazzanoProject %s with error: %v", name, err))
+		Log(Error, fmt.Sprintf("Failed to get VerrazzanoProject %s: %v", name, err))
 		return false, err
 	}
 

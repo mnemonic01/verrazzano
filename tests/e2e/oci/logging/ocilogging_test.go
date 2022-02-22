@@ -43,6 +43,9 @@ var failed = false
 
 var t = framework.NewTestFramework("logging")
 
+var springbootNamespace = pkg.GenerateNamespace("springboot-logging")
+var helidonNamespace = pkg.GenerateNamespace("helidon-logging")
+
 var _ = t.AfterEach(func() {
 	failed = failed || CurrentSpecReport().Failed()
 })
@@ -69,12 +72,12 @@ var _ = t.AfterSuite(func() {
 	pkg.Concurrently(
 		func() {
 			start := time.Now()
-			pkg.UndeploySpringBootApplication()
+			pkg.UndeploySpringBootApplication(springbootNamespace)
 			metrics.Emit(t.Metrics.With("undeployment_elapsed_time", time.Since(start).Milliseconds()))
 		},
 		func() {
 			start := time.Now()
-			pkg.UndeployHelloHelidonApplication()
+			pkg.UndeployHelloHelidonApplication(helidonNamespace)
 			metrics.Emit(t.Metrics.With("undeployment_elapsed_time", time.Since(start).Milliseconds()))
 		},
 	)
@@ -82,7 +85,7 @@ var _ = t.AfterSuite(func() {
 
 var _ = t.AfterEach(func() {})
 
-var _ = t.Describe("OCI Logging", func() {
+var _ = t.Describe("OCI Logging", Label("f:oci-integration.logging"), func() {
 	var systemLogID, defaultAppLogID string
 
 	t.BeforeEach(func() {
@@ -146,11 +149,11 @@ var _ = t.Describe("OCI Logging", func() {
 		t.It("the default app log object has recent log records", func() {
 
 			start := time.Now()
-			pkg.DeploySpringBootApplication()
+			pkg.DeploySpringBootApplication(springbootNamespace)
 			metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 
 			Eventually(func() (int, error) {
-				logs, err := getLogRecordsFromOCI(&logSearchClient, compartmentID, logGroupID, defaultAppLogID, pkg.SpringbootNamespace)
+				logs, err := getLogRecordsFromOCI(&logSearchClient, compartmentID, logGroupID, defaultAppLogID, springbootNamespace)
 				if err != nil {
 					return 0, err
 				}
@@ -167,11 +170,11 @@ var _ = t.Describe("OCI Logging", func() {
 		t.It("the namespace-specific app log object has recent log records", func() {
 
 			start := time.Now()
-			pkg.DeployHelloHelidonApplication(nsLogID)
+			pkg.DeployHelloHelidonApplication(helidonNamespace, nsLogID)
 			metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 
 			Eventually(func() (int, error) {
-				logs, err := getLogRecordsFromOCI(&logSearchClient, compartmentID, logGroupID, nsLogID, pkg.HelloHelidonNamespace)
+				logs, err := getLogRecordsFromOCI(&logSearchClient, compartmentID, logGroupID, nsLogID, helidonNamespace)
 				if err != nil {
 					return 0, err
 				}

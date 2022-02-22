@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/verrazzano/verrazzano/pkg/log/vzlog"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -25,6 +26,7 @@ import (
 	vzapi "github.com/verrazzano/verrazzano/application-operator/apis/oam/v1alpha1"
 	"github.com/verrazzano/verrazzano/application-operator/constants"
 	"github.com/verrazzano/verrazzano/application-operator/mocks"
+	"go.uber.org/zap"
 	istionet "istio.io/api/networking/v1alpha3"
 	istioclient "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	k8sapps "k8s.io/api/apps/v1"
@@ -903,10 +905,9 @@ func TestFailureToGetWorkload(t *testing.T) {
 
 	// Validate the results
 	mocker.Finish()
-	assert.Error(err, "Expected and error")
-	assert.Contains(err.Error(), "not found")
-	assert.Equal(false, result.Requeue)
-	assert.Equal(time.Duration(0), result.RequeueAfter)
+	assert.Nil(err)
+	assert.Equal(true, result.Requeue)
+	assert.GreaterOrEqual(result.RequeueAfter.Milliseconds(), time.Duration(0).Milliseconds())
 }
 
 // TestFailureToGetWorkloadDefinition tests the Reconcile method for the following use case
@@ -1009,10 +1010,9 @@ func TestFailureToGetWorkloadDefinition(t *testing.T) {
 
 	// Validate the results
 	mocker.Finish()
-	assert.Error(err)
-	assert.Contains(err.Error(), "not supported")
-	assert.Equal(false, result.Requeue)
-	assert.Equal(time.Duration(0), result.RequeueAfter)
+	assert.Nil(err)
+	assert.Equal(true, result.Requeue)
+	assert.GreaterOrEqual(result.RequeueAfter.Milliseconds(), time.Duration(0).Milliseconds())
 }
 
 // TestFailureToUpdateStatus tests tje Reconcile method for the following use case
@@ -1165,10 +1165,9 @@ func TestFailureToUpdateStatus(t *testing.T) {
 
 	// Validate the results
 	mocker.Finish()
-	assert.Error(err)
-	assert.Contains(err.Error(), "test-error-message")
+	assert.Nil(err)
 	assert.Equal(true, result.Requeue)
-	assert.Equal(time.Duration(0), result.RequeueAfter)
+	assert.GreaterOrEqual(result.RequeueAfter.Milliseconds(), time.Duration(0).Milliseconds())
 }
 
 // TestBuildAppHostNameForDNS tests building a DNS hostname for the application
@@ -1679,9 +1678,9 @@ func TestGetTraitFailurePropagated(t *testing.T) {
 	request := newRequest("test-space", "test-name")
 	result, err := reconciler.Reconcile(request)
 	mocker.Finish()
-	assert.Contains(err.Error(), "test-error")
-	assert.Equal(false, result.Requeue)
-	assert.Equal(time.Duration(0), result.RequeueAfter)
+	assert.Nil(err)
+	assert.Equal(true, result.Requeue)
+	assert.GreaterOrEqual(result.RequeueAfter.Milliseconds(), time.Duration(0).Milliseconds())
 }
 
 // TestGetNotFoundResource tests the Reconcile method for the following use case.
@@ -2215,7 +2214,8 @@ func TestExtractServicesOnlyOneService(t *testing.T) {
 	children := []*unstructured.Unstructured{&u}
 	var extractedServices []*k8score.Service
 	reconciler := Reconciler{}
-	extractedServices, err = reconciler.extractServicesFromUnstructuredChildren(children)
+	log := vzlog.DefaultLogger()
+	extractedServices, err = reconciler.extractServicesFromUnstructuredChildren(children, log)
 	assert.NoError(err)
 	assert.NotNil(extractedServices)
 	assert.Equal(len(extractedServices), 1)
@@ -2246,7 +2246,8 @@ func TestExtractServicesMultipleServices(t *testing.T) {
 	children := []*unstructured.Unstructured{&u1, &u2, &u3}
 	var extractedServices []*k8score.Service
 	reconciler := Reconciler{}
-	extractedServices, err = reconciler.extractServicesFromUnstructuredChildren(children)
+	log := vzlog.DefaultLogger()
+	extractedServices, err = reconciler.extractServicesFromUnstructuredChildren(children, log)
 	assert.NoError(err)
 	assert.NotNil(extractedServices)
 	assert.Equal(len(extractedServices), 3)
@@ -2825,7 +2826,7 @@ func newScheme() *runtime.Scheme {
 // newIngressTraitReconciler creates a new reconciler for testing
 // c - The Kerberos client to inject into the reconciler
 func newIngressTraitReconciler(c client.Client) Reconciler {
-	log := ctrl.Log.WithName("test")
+	log := zap.S().With("test")
 	scheme := newScheme()
 	reconciler := Reconciler{
 		Client: c,

@@ -75,7 +75,7 @@ func (t *TestFramework) It(text string, args ...interface{}) bool {
 	if args == nil {
 		ginkgo.Fail("Unsupported args type - expected non-nil")
 	}
-	body := args[0]
+	body := args[len(args)-1]
 	if !isBodyFunc(body) {
 		ginkgo.Fail("Unsupported body type - expected function")
 	}
@@ -84,7 +84,8 @@ func (t *TestFramework) It(text string, args ...interface{}) bool {
 		reflect.ValueOf(body).Call([]reflect.Value{})
 	}
 
-	args[0] = f
+	args[len(args)-1] = ginkgo.Offset(1)
+	args = append(args, f)
 	return ginkgo.It(text, args...)
 }
 
@@ -93,7 +94,7 @@ func (t *TestFramework) Describe(text string, args ...interface{}) bool {
 	if args == nil {
 		ginkgo.Fail("Unsupported args type - expected non-nil")
 	}
-	body := args[0]
+	body := args[len(args)-1]
 	if !isBodyFunc(body) {
 		ginkgo.Fail("Unsupported body type - expected function")
 	}
@@ -102,7 +103,8 @@ func (t *TestFramework) Describe(text string, args ...interface{}) bool {
 		reflect.ValueOf(body).Call([]reflect.Value{})
 		metrics.Emit(t.Metrics.With(metrics.Duration, metrics.DurationMillis()))
 	}
-	args[0] = f
+	args[len(args)-1] = ginkgo.Offset(1)
+	args = append(args, f)
 	return ginkgo.Describe(text, args...)
 }
 
@@ -154,6 +156,10 @@ func (t *TestFramework) AfterSuite(body func()) bool {
 
 // Entry - wrapper function for Ginkgo Entry
 func (t *TestFramework) Entry(description interface{}, args ...interface{}) ginkgo.TableEntry {
+	// insert an Offset into the args, but not as the last item, so that the right code location is reported
+	f := args[len(args)-1]
+	args[len(args)-1] = ginkgo.Offset(6) // need to go 6 up the stack to get the caller
+	args = append(args, f)
 	return ginkgo.Entry(description, args...)
 }
 

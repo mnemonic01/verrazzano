@@ -84,7 +84,7 @@
           "images": [
             {
               "image": "external-dns",
-              "tag": "v0.7.1-20220114051301-ec9bcfea",
+              "tag": "v0.10.2-20220119205950-b0543ed2",
               "helmFullImageKey": "image.repository",
               "helmRegKey": "image.registry",
               "helmTagKey": "image.tag"
@@ -102,12 +102,12 @@
           "images": [
             {
               "image": "pilot",
-              "tag": "1.10.4",
+              "tag": "1.10.4-2",
               "helmFullImageKey": "values.pilot.image"
             },
             {
               "image": "proxyv2",
-              "tag": "1.10.4",
+              "tag": "1.10.4-2",
               "helmImageKey": "values.global.proxy.image",
               "helmTagKey": "values.global.tag",
               "helmRegistryAndRepoKey": "values.global.hub"
@@ -185,7 +185,7 @@
           "images": [
             {
               "image": "verrazzano-operator",
-              "tag": "1.2.0-20211216225938-bc0bc83",
+              "tag": "1.3.0-20220216005855-4714c1c",
               "helmFullImageKey": "verrazzanoOperator.imageName",
               "helmTagKey": "verrazzanoOperator.imageVersion"
             },
@@ -196,33 +196,33 @@
             },
             {
               "image": "verrazzano-monitoring-operator",
-              "tag": "1.2.0-20211216213535-ce59978",
+              "tag": "1.3.0-20220216005851-173e0f7",
               "helmFullImageKey": "monitoringOperator.imageName",
               "helmTagKey": "monitoringOperator.imageVersion"
             },
             {
               "image": "proxyv2",
-              "tag": "1.10.4",
+              "tag": "1.10.4-2",
               "helmFullImageKey": "monitoringOperator.istioProxyImage"
             },
             {
               "image": "grafana",
-              "tag": "v7.2.1-2",
+              "tag": "v7.5.11",
               "helmFullImageKey": "monitoringOperator.grafanaImage"
             },
             {
               "image": "prometheus",
-              "tag": "v2.21.0-1",
+              "tag": "v2.31.1",
               "helmFullImageKey": "monitoringOperator.prometheusImage"
             },
             {
-              "image": "elasticsearch",
-              "tag": "7.10.2-20211220140552-8bd728ed",
+              "image": "opensearch",
+              "tag": "1.2.3-20220207214930-833b159de83",
               "helmFullImageKey": "monitoringOperator.esImage"
             },
             {
-              "image": "kibana-oss",
-              "tag": "7.10.2-20211213083528-4463f4c",
+              "image": "opensearch-dashboards",
+              "tag": "1.2.0-20220209174907-c1f2500d38",
               "helmFullImageKey": "monitoringOperator.kibanaImage"
             },
             {
@@ -242,7 +242,7 @@
             },
             {
               "image": "console",
-              "tag": "1.2.0-20211216213817-33fe6ee",
+              "tag": "1.3.0-20220216010828-2062518",
               "helmFullImageKey": "console.imageName",
               "helmTagKey": "console.imageVersion"
             },
@@ -286,7 +286,7 @@
           "images": [
             {
               "image": "oam-kubernetes-runtime",
-              "tag": "v0.3.0-20220111205344-e057ce8",
+              "tag": "v0.3.0-20220125135517-3a38226",
               "helmFullImageKey": "image.repository",
               "helmTagKey": "image.tag"
             }
@@ -351,7 +351,7 @@
           "images": [
             {
               "image": "kiali",
-              "tag": "v1.34.1",
+              "tag": "v1.34.1-1",
               "helmFullImageKey": "deployment.image_name",
               "helmTagKey": "deployment.image_version"
             }
@@ -368,7 +368,7 @@
           "images": [
             {
               "image": "mysql",
-              "tag": "8.0.26",
+              "tag": "8.0.28",
               "helmFullImageKey": "image",
               "helmTagKey": "imageTag"
             }
@@ -397,7 +397,7 @@
           "images": [
             {
               "image": "keycloak",
-              "tag": "15.0.2-20211220135436-a2a614d2d0",
+              "tag": "15.0.2-20220209090418-a7c16adfc3",
               "helmFullImageKey": "image.repository",
               "helmTagKey": "image.tag"
             }
@@ -409,7 +409,7 @@
           "images": [
             {
               "image": "keycloak-oracle-theme",
-              "tag": "1.2.0-20211216213531-c95fa79"
+              "tag": "1.3.0-20220216155525-dc513a7"
             }
           ]
         }

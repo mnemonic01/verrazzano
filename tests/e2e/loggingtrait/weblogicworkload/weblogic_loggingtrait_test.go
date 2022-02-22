@@ -106,9 +106,11 @@ func deployWebLogicApplication() {
 	metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 }
 
-var _ = t.Describe("Test WebLogic loggingtrait application", func() {
+var _ = t.Describe("Test WebLogic loggingtrait application", Label("f:app-lcm.oam",
+	"f:app-lcm.weblogic-workload",
+	"f:app-lcm.logging-trait"), func() {
 
-	t.Context("deployment.", func() {
+	t.Context("deployment.", FlakeAttempts(8), func() {
 		// GIVEN the app is deployed
 		// WHEN the running pods are checked
 		// THEN the adminserver and mysql pods should be found running

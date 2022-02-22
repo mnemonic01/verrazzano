@@ -1,6 +1,13 @@
 // Copyright (c) 2022, Oracle and/or its affiliates.
 // Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
 
+properties([[$class: 'ThrottleJobProperty', categories: [], limitOneJobWithMatchingParams: false, maxConcurrentPerNode: 1,
+                    maxConcurrentTotal: 1, paramsToUseForLimit: '', throttleEnabled: true, throttleOption: 'project'],
+               [$class: 'BuildDiscarderProperty',
+                strategy: [$class: 'LogRotator', numToKeepStr: '10']],
+                pipelineTriggers([cron('H/5 * * * *')]),
+           ])
+
 pipeline {
     options {
         skipDefaultCheckout true
@@ -17,6 +24,7 @@ pipeline {
     }
 
     environment {
+        TEST_ENV = "LRE"
         DOCKER_CREDS = credentials('github-packages-credentials-rw')
         DOCKER_EMAIL = credentials('github-packages-email')
         DOCKER_REPO = 'ghcr.io'
@@ -36,12 +44,21 @@ pipeline {
         ssh_public_key_path = "${WORKSPACE}/.ssh/id_rsa.pub"
         ssh_private_key_path = "${WORKSPACE}/.ssh/id_rsa"
 
+        //used to emit metrics
+        SEARCH_HTTP_ENDPOINT = credentials('search-gw-url')
+        PROMETHEUS_CREDENTIALS = credentials('prometheus-credentials')
+        SEARCH_PASSWORD = "${PROMETHEUS_CREDENTIALS_PSW}"
+        SEARCH_USERNAME = "${PROMETHEUS_CREDENTIALS_USR}"
+
         OCI_CLI_AUTH="api_key"
         OCI_CLI_TENANCY = credentials('oci-dev-tenancy')
         OCI_CLI_USER = credentials('oci-dev-user-ocid')
         OCI_CLI_FINGERPRINT = credentials('oci-dev-api-key-fingerprint')
         OCI_CLI_KEY_FILE = credentials('oci-dev-api-key-file')
         NO_PROXY = ".nip.io"
+
+	    WEBLOGIC_PSW = credentials('weblogic-example-domain-password') // Needed by ToDoList example test
+        DATABASE_PSW = credentials('todo-mysql-password') // Needed by ToDoList example test
     }
 
     stages {
@@ -70,21 +87,6 @@ pipeline {
                             sleep(30)
                             sh """
                     echo "${DOCKER_CREDS_PSW}" | docker login ${env.DOCKER_REPO} -u ${DOCKER_CREDS_USR} --password-stdin
-                            """
-                        }
-                    }
-                }
-                script {
-                    try {
-                        sh """
-                    echo "${OCR_CREDS_PSW}" | docker login -u ${OCR_CREDS_USR} ${OCR_REPO} --password-stdin
-                        """
-                    } catch(error) {
-                        echo "OCR docker login failed, retrying after sleep"
-                        retry(4) {
-                            sleep(30)
-                            sh """
-                    echo "${OCR_CREDS_PSW}" | docker login -u ${OCR_CREDS_USR} ${OCR_REPO} --password-stdin
                             """
                         }
                     }
@@ -180,6 +182,10 @@ pipeline {
                         ls -ls ${KUBECONFIG}
                         sed -i 's|server:.*|server: https://127.0.0.1:6443|g' $KUBECONFIG
                         cat ${KUBECONFIG}
+                        # updating kubeconfig with sa
+                        cd ${GO_REPO_PATH}/verrazzano/
+                        ci/scripts/update_lre_kubeconfig.sh
+
                         echo "run kubectl get nodes"
                         kubectl get nodes
                         echo "run kubectl get pods"
@@ -198,7 +204,7 @@ pipeline {
                         kubectl get nodes
                         echo "run kubectl get pods"
                         kubectl get pods
-                        '''
+                    '''
                 }
             }
         }
@@ -207,6 +213,9 @@ pipeline {
             parallel {
                 stage('verify-infra restapi') {
                     steps {
+                        sh '''
+                            echo ${KUBECONFIG}
+                        '''
                         runGinkgoRandomize('verify-infra/restapi')
                     }
                 }
@@ -215,11 +224,65 @@ pipeline {
                         runGinkgoRandomize('verify-infra/vmi')
                     }
                 }
+                stage('istio authorization policy') {
+                    steps {
+                        runGinkgo('istio/authz')
+                    }
+                }
+                stage('security role based access') {
+                    steps {
+                        runGinkgo('security/rbac')
+                    }
+                }
+                stage('system logging') {
+                    steps {
+                        runGinkgo('logging/system')
+                    }
+                }
+                stage('examples logging helidon') {
+                    steps {
+                        runGinkgo('logging/helidon')
+                    }
+                }
                 stage('examples helidon') {
                     steps {
                         runGinkgo('examples/helidon')
                     }
                 }
+                stage('examples helidonconfig') {
+                    steps {
+                        runGinkgo('examples/helidonconfig')
+                    }
+                }
+                stage('examples springboot') {
+                    steps {
+                        runGinkgo('examples/springboot')
+                    }
+                }
+
+		        stage('examples socks') {
+                    steps {
+                        runSocksVariant('helidon')
+                        runSocksVariant('micronaut')
+                        runSocksVariant('spring')
+                    }
+                }
+                stage('examples todo') {
+                    steps {
+                        runGinkgo('examples/todo')
+                    }
+                }
+                stage('examples bobs') {
+                    steps {
+                        runGinkgo('examples/bobsbooks')
+                    }
+                }
+                stage('k8s deployment workload metrics') {
+                    steps {
+                        runGinkgo('metrics/deploymetrics')
+                    }
+                }
+
             }
             post {
                 always {
@@ -235,6 +298,8 @@ def runGinkgoRandomize(testSuitePath) {
     catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
         sh """
             cd ${GO_REPO_PATH}/verrazzano/tests/e2e
+            echo in runGinkgoRandomize ${KUBECONFIG}
+            cat ${KUBECONFIG}
             ginkgo -p --randomize-all -v --keep-going --no-color ${testSuitePath}/...
         """
     }
@@ -245,6 +310,15 @@ def runGinkgo(testSuitePath) {
         sh """
             cd ${GO_REPO_PATH}/verrazzano/tests/e2e
             ginkgo -v --keep-going --no-color ${testSuitePath}/...
+        """
+    }
+}
+
+def runSocksVariant(variant) {
+    catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+        sh """
+            cd ${GO_REPO_PATH}/verrazzano/tests/e2e
+            SOCKS_SHOP_VARIANT=${variant} ginkgo -v --keep-going --no-color examples/socks/...
         """
     }
 }

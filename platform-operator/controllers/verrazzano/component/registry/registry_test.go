@@ -4,8 +4,13 @@
 package registry
 
 import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/verrazzano/verrazzano/pkg/helm"
 	"github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/appoper"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/authproxy"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/certmanager"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/coherence"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/externaldns"
@@ -20,15 +25,11 @@ import (
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/verrazzano"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/weblogic"
-	"github.com/verrazzano/verrazzano/platform-operator/internal/helm"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	k8scheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -47,20 +48,21 @@ func TestGetComponents(t *testing.T) {
 	assert := assert.New(t)
 	comps := GetComponents()
 
-	assert.Len(comps, 13, "Wrong number of components")
-	assert.Equal(comps[0].Name(), nginx.ComponentName)
-	assert.Equal(comps[1].Name(), certmanager.ComponentName)
-	assert.Equal(comps[2].Name(), externaldns.ComponentName)
-	assert.Equal(comps[3].Name(), rancher.ComponentName)
-	assert.Equal(comps[4].Name(), verrazzano.ComponentName)
-	assert.Equal(comps[5].Name(), coherence.ComponentName)
-	assert.Equal(comps[6].Name(), weblogic.ComponentName)
-	assert.Equal(comps[7].Name(), oam.ComponentName)
-	assert.Equal(comps[8].Name(), appoper.ComponentName)
-	assert.Equal(comps[9].Name(), mysql.ComponentName)
-	assert.Equal(comps[10].Name(), keycloak.ComponentName)
-	assert.Equal(comps[11].Name(), kiali.ComponentName)
-	assert.Equal(comps[12].Name(), istio.ComponentName)
+	assert.Len(comps, 14, "Wrong number of components")
+	assert.Equal(comps[0].Name(), oam.ComponentName)
+	assert.Equal(comps[1].Name(), weblogic.ComponentName)
+	assert.Equal(comps[2].Name(), appoper.ComponentName)
+	assert.Equal(comps[3].Name(), istio.ComponentName)
+	assert.Equal(comps[4].Name(), nginx.ComponentName)
+	assert.Equal(comps[5].Name(), certmanager.ComponentName)
+	assert.Equal(comps[6].Name(), externaldns.ComponentName)
+	assert.Equal(comps[7].Name(), rancher.ComponentName)
+	assert.Equal(comps[8].Name(), verrazzano.ComponentName)
+	assert.Equal(comps[9].Name(), authproxy.ComponentName)
+	assert.Equal(comps[10].Name(), coherence.ComponentName)
+	assert.Equal(comps[11].Name(), mysql.ComponentName)
+	assert.Equal(comps[12].Name(), keycloak.ComponentName)
+	assert.Equal(comps[13].Name(), kiali.ComponentName)
 }
 
 // TestFindComponent tests FindComponent
@@ -80,11 +82,10 @@ func TestFindComponent(t *testing.T) {
 //  THEN the true is returned if all depdencies are met
 func TestComponentDependenciesMet(t *testing.T) {
 	comp := helm2.HelmComponent{
-		ReleaseName:     "foo",
-		ChartDir:        "chartDir",
-		ChartNamespace:  "bar",
-		ReadyStatusFunc: nil,
-		Dependencies:    []string{istio.ComponentName},
+		ReleaseName:    "foo",
+		ChartDir:       "chartDir",
+		ChartNamespace: "bar",
+		Dependencies:   []string{istio.ComponentName},
 	}
 	client := fake.NewFakeClientWithScheme(k8scheme.Scheme, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -112,11 +113,10 @@ func TestComponentDependenciesMet(t *testing.T) {
 //  THEN the false is returned if any depdencies are not met
 func TestComponentDependenciesNotMet(t *testing.T) {
 	comp := helm2.HelmComponent{
-		ReleaseName:     "foo",
-		ChartDir:        "chartDir",
-		ChartNamespace:  "bar",
-		ReadyStatusFunc: nil,
-		Dependencies:    []string{istio.ComponentName},
+		ReleaseName:    "foo",
+		ChartDir:       "chartDir",
+		ChartNamespace: "bar",
+		Dependencies:   []string{istio.ComponentName},
 	}
 	client := fake.NewFakeClientWithScheme(k8scheme.Scheme, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -144,11 +144,10 @@ func TestComponentDependenciesNotMet(t *testing.T) {
 //  THEN the false is returned if the dependent chart isn't installed
 func TestComponentDependenciesDependencyChartNotInstalled(t *testing.T) {
 	comp := helm2.HelmComponent{
-		ReleaseName:     "foo",
-		ChartDir:        "chartDir",
-		ChartNamespace:  "bar",
-		ReadyStatusFunc: nil,
-		Dependencies:    []string{istio.ComponentName},
+		ReleaseName:    "foo",
+		ChartDir:       "chartDir",
+		ChartNamespace: "bar",
+		Dependencies:   []string{istio.ComponentName},
 	}
 	client := fake.NewFakeClientWithScheme(k8scheme.Scheme)
 	helm.SetChartStatusFunction(func(releaseName string, namespace string) (string, error) {
@@ -165,11 +164,10 @@ func TestComponentDependenciesDependencyChartNotInstalled(t *testing.T) {
 //  THEN the false is returned if any depdencies are not met
 func TestComponentMultipleDependenciesPartiallyMet(t *testing.T) {
 	comp := helm2.HelmComponent{
-		ReleaseName:     "foo",
-		ChartDir:        "chartDir",
-		ChartNamespace:  "bar",
-		ReadyStatusFunc: nil,
-		Dependencies:    []string{istio.ComponentName, "cert-manager"},
+		ReleaseName:    "foo",
+		ChartDir:       "chartDir",
+		ChartNamespace: "bar",
+		Dependencies:   []string{istio.ComponentName, "cert-manager"},
 	}
 	client := fake.NewFakeClientWithScheme(k8scheme.Scheme, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -197,11 +195,10 @@ func TestComponentMultipleDependenciesPartiallyMet(t *testing.T) {
 //  THEN the true is returned if all depdencies are met
 func TestComponentMultipleDependenciesMet(t *testing.T) {
 	comp := helm2.HelmComponent{
-		ReleaseName:     "foo",
-		ChartDir:        "chartDir",
-		ChartNamespace:  "bar",
-		ReadyStatusFunc: nil,
-		Dependencies:    []string{istio.ComponentName, "cert-manager"},
+		ReleaseName:    "foo",
+		ChartDir:       "chartDir",
+		ChartNamespace: "bar",
+		Dependencies:   []string{istio.ComponentName, "cert-manager"},
 	}
 	client := fake.NewFakeClientWithScheme(k8scheme.Scheme, newReadyDeployment("istiod", "istio-system"),
 		newReadyDeployment(certManagerDeploymentName, certManagerNamespace),
@@ -221,11 +218,10 @@ func TestComponentMultipleDependenciesMet(t *testing.T) {
 //  THEN it returns false if there's a cycle in the dependencies
 func TestComponentDependenciesCycle(t *testing.T) {
 	comp := helm2.HelmComponent{
-		ReleaseName:     "foo",
-		ChartDir:        "chartDir",
-		ChartNamespace:  "bar",
-		ReadyStatusFunc: nil,
-		Dependencies:    []string{"istiod", "cert-manager", "istiod"},
+		ReleaseName:    "foo",
+		ChartDir:       "chartDir",
+		ChartNamespace: "bar",
+		Dependencies:   []string{"istiod", "cert-manager", "istiod"},
 	}
 	client := fake.NewFakeClientWithScheme(k8scheme.Scheme,
 		newReadyDeployment("istiod", "istio-system"),
@@ -366,6 +362,10 @@ func TestComponentDependenciesChainNoCycle(t *testing.T) {
 //  WHEN I call checkDependencies for it
 //  THEN No error is returned that indicates a cycle in the chain
 func TestRegistryDependencies(t *testing.T) {
+	helm.SetChartStatusFunction(func(releaseName string, namespace string) (string, error) {
+		return helm.ChartStatusDeployed, nil
+	})
+	defer helm.SetDefaultChartStatusFunction()
 	client := fake.NewFakeClientWithScheme(k8scheme.Scheme)
 
 	for _, comp := range GetComponents() {

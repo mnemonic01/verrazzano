@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/verrazzano/verrazzano/pkg/k8sutil"
 	"github.com/verrazzano/verrazzano/pkg/test/framework"
@@ -34,7 +35,7 @@ const prometheusHTTPSScheme string = "scheme: https"
 
 var expectedPodsFoo = []string{"sleep-workload", "springboot-frontend-workload", "springboot-backend-workload"}
 var expectedPodsBar = []string{"sleep-workload", "springboot-frontend-workload", "springboot-backend-workload"}
-var waitTimeout = 10 * time.Minute
+var waitTimeout = 15 * time.Minute
 var pollingInterval = 30 * time.Second
 var shortPollingInterval = 10 * time.Second
 
@@ -259,7 +260,8 @@ func undeployNoIstioApplication() {
 	}, waitTimeout, shortPollingInterval).Should(BeTrue())
 }
 
-var _ = t.Describe("AuthPolicy test,", func() {
+var _ = t.Describe("AuthPolicy test,", Label("f:security.authpol",
+	"f:app-lcm.spring-workload"), func() {
 	// Verify springboot-workload pod is running
 	// GIVEN springboot app is deployed
 	// WHEN the component and appconfig are created
@@ -289,24 +291,21 @@ var _ = t.Describe("AuthPolicy test,", func() {
 	})
 
 	var fooHost = ""
+	var barHost = ""
+	var noIstioHost = ""
+
 	var err error
-	t.It("Get foo host from gateway.", func() {
+	t.BeforeEach(func() {
 		Eventually(func() (string, error) {
 			fooHost, err = k8sutil.GetHostnameFromGateway(fooNamespace, "")
 			return fooHost, err
 		}, waitTimeout, shortPollingInterval).Should(Not(BeEmpty()), fmt.Sprintf("Failed to get host from gateway in %s", fooNamespace))
-	})
 
-	var barHost = ""
-	t.It("Get bar host from gateway.", func() {
 		Eventually(func() (string, error) {
 			barHost, err = k8sutil.GetHostnameFromGateway(barNamespace, "")
 			return barHost, err
 		}, waitTimeout, shortPollingInterval).Should(Not(BeEmpty()), fmt.Sprintf("Failed to get host from gateway in %s", barNamespace))
-	})
 
-	var noIstioHost = ""
-	t.It("Get noistio host from gateway.", func() {
 		Eventually(func() (string, error) {
 			noIstioHost, err = k8sutil.GetHostnameFromGateway(noIstioNamespace, "")
 			return noIstioHost, err

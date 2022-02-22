@@ -8,6 +8,22 @@ spec:
   components:
     applicationOperator:
       enabled: true
+    authProxy:
+      enabled: true
+      kubernetes:
+        replicas: 2
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchExpressions:
+                      - key: app
+                        operator: In
+                        values:
+                          - verrazzano-authproxy
+                  topologyKey: kubernetes.io/hostname
     certManager:
       enabled: true
       certificate:
@@ -43,7 +59,7 @@ spec:
           value: "3"
         - name: controller.service.externalIPs
           valueList:
-          - 11.22.33.44
+            - 11.22.33.44
       ports:
         - name: http
           nodePort: 30080
@@ -64,7 +80,37 @@ spec:
           value: "3"
         - name: gateways.istio-ingressgateway.externalIPs
           valueList:
-          - 11.22.33.44
+            - 11.22.33.44
+      ingress:
+        kubernetes:
+          replicas: 2
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    labelSelector:
+                      matchExpressions:
+                        - key: app
+                          operator: In
+                          values:
+                            - istio-ingressgateway
+                    topologyKey: kubernetes.io/hostname
+      egress:
+        kubernetes:
+          replicas: 2
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    labelSelector:
+                      matchExpressions:
+                        - key: app
+                          operator: In
+                          values:
+                            - istio-egressgateway
+                    topologyKey: kubernetes.io/hostname
     kiali:
       enabled: true
     keycloak:

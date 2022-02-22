@@ -13,7 +13,20 @@ import (
 	"strings"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/verrazzano/verrazzano/platform-operator/internal/k8s/status"
+
+	"github.com/verrazzano/verrazzano/pkg/bom"
+	globalconst "github.com/verrazzano/verrazzano/pkg/constants"
+	"github.com/verrazzano/verrazzano/pkg/log/vzlog"
+	vzos "github.com/verrazzano/verrazzano/pkg/os"
+	"github.com/verrazzano/verrazzano/pkg/semver"
+	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
+	"github.com/verrazzano/verrazzano/platform-operator/constants"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/secret"
+	"github.com/verrazzano/verrazzano/platform-operator/internal/config"
+	"github.com/verrazzano/verrazzano/platform-operator/internal/k8s/namespace"
+	"github.com/verrazzano/verrazzano/platform-operator/internal/vzconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -22,26 +35,11 @@ import (
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	clipkg "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
-
-	"github.com/verrazzano/verrazzano/pkg/bom"
-	globalconst "github.com/verrazzano/verrazzano/pkg/constants"
-	ctrlerrors "github.com/verrazzano/verrazzano/pkg/controller/errors"
-	"github.com/verrazzano/verrazzano/pkg/semver"
-	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
-	"github.com/verrazzano/verrazzano/platform-operator/constants"
-	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
-	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/secret"
-	"github.com/verrazzano/verrazzano/platform-operator/internal/config"
-	"github.com/verrazzano/verrazzano/platform-operator/internal/k8s/namespace"
-	vzos "github.com/verrazzano/verrazzano/platform-operator/internal/os"
-	"github.com/verrazzano/verrazzano/platform-operator/internal/vzconfig"
 )
 
 // ComponentName is the name of the component
 
 const (
-	ComponentName           = "verrazzano"
-	keycloakInClusterURL    = "keycloak-http.keycloak.svc.cluster.local"
 	esHelmValuePrefixFormat = "elasticSearch.%s"
 
 	workloadName  = "system-es-master"
@@ -73,8 +71,24 @@ func resolveVerrazzanoNamespace(ns string) string {
 	return globalconst.VerrazzanoSystemNamespace
 }
 
+// isVerrazzanoReady Verrazzano component ready-check
+func isVerrazzanoReady(ctx spi.ComponentContext) bool {
+	var deployments []types.NamespacedName
+	if isVMOEnabled(ctx.EffectiveCR()) {
+		deployments = append(deployments, []types.NamespacedName{
+			{Name: "verrazzano-operator", Namespace: globalconst.VerrazzanoSystemNamespace},
+			{Name: "verrazzano-monitoring-operator", Namespace: globalconst.VerrazzanoSystemNamespace},
+		}...)
+	}
+	prefix := fmt.Sprintf("Component %s", ctx.GetComponent())
+	if !status.DeploymentsReady(ctx.Log(), ctx.Client(), deployments, 1, prefix) {
+		return false
+	}
+	return isVerrazzanoSecretReady(ctx)
+}
+
 // VerrazzanoPreUpgrade contains code that is run prior to helm upgrade for the Verrazzano helm chart
-func verrazzanoPreUpgrade(log *zap.SugaredLogger, client clipkg.Client, _ string, namespace string, _ string) error {
+func verrazzanoPreUpgrade(log vzlog.VerrazzanoLogger, client clipkg.Client, _ string, namespace string, _ string) error {
 	return fixupFluentdDaemonset(log, client, namespace)
 }
 
@@ -86,7 +100,7 @@ func appendVerrazzanoOverrides(ctx spi.ComponentContext, _ string, _ string, _ s
 	//   way we implement Helm calls, but don't depend on that
 	vzkvs, err := appendCustomImageOverrides(kvs)
 	if err != nil {
-		return kvs, err
+		return kvs, ctx.Log().ErrorfNewErr("Failed to append custom image overrides: %v", err)
 	}
 
 	effectiveCR := ctx.EffectiveCR()
@@ -101,7 +115,7 @@ func appendVerrazzanoOverrides(ctx spi.ComponentContext, _ string, _ string, _ s
 
 	// Append the simple overrides
 	if err := appendVerrazzanoValues(ctx, &overrides); err != nil {
-		return kvs, ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+		return kvs, ctx.Log().ErrorfNewErr("Failed appending Verrazzano values: %v", err)
 	}
 	// Append any VMI overrides to the override values object, and any installArgs overrides to the kvs list
 	vzkvs = appendVMIOverrides(effectiveCR, &overrides, resourceRequestOverrides, vzkvs)
@@ -110,13 +124,16 @@ func appendVerrazzanoOverrides(ctx spi.ComponentContext, _ string, _ string, _ s
 	appendFluentdOverrides(effectiveCR, &overrides)
 	// append the security role overrides
 	if err := appendSecurityOverrides(effectiveCR, &overrides); err != nil {
-		return kvs, ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+		return kvs, ctx.Log().ErrorfNewErr("Failed appending Verrazzano security overrides: %v", err)
 	}
+
+	// Append any installArgs overrides to the kvs list
+	vzkvs = appendVerrazzanoComponentOverrides(effectiveCR, vzkvs)
 
 	// Write the overrides file to a temp dir and add a helm file override argument
 	overridesFileName, err := generateOverridesFile(ctx, &overrides)
 	if err != nil {
-		return kvs, ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+		return kvs, ctx.Log().ErrorfNewErr("Failed generating Verrazzano overrides file: %v", err)
 	}
 
 	// Append any installArgs overrides in vzkvs after the file overrides to ensure precedence of those
@@ -128,12 +145,12 @@ func appendVerrazzanoOverrides(ctx spi.ComponentContext, _ string, _ string, _ s
 func appendCustomImageOverrides(kvs []bom.KeyValue) ([]bom.KeyValue, error) {
 	bomFile, err := bom.NewBom(config.GetDefaultBOMFilePath())
 	if err != nil {
-		return kvs, ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+		return kvs, err
 	}
 
 	imageOverrides, err := bomFile.BuildImageOverrides("monitoring-init-images")
 	if err != nil {
-		return kvs, ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+		return kvs, err
 	}
 
 	kvs = append(kvs, imageOverrides...)
@@ -154,26 +171,16 @@ func generateOverridesFile(ctx spi.ComponentContext, overrides *verrazzanoValues
 	if err := writeFileFunc(overridesFileName, bytes, fs.ModeAppend); err != nil {
 		return "", err
 	}
-	ctx.Log().Infof("Verrazzano install overrides file %s contents: %s", overridesFileName, string(bytes))
+	ctx.Log().Debugf("Verrazzano install overrides file %s contents: %s", overridesFileName, string(bytes))
 	return overridesFileName, nil
 }
 
 func appendVerrazzanoValues(ctx spi.ComponentContext, overrides *verrazzanoValues) error {
 	effectiveCR := ctx.EffectiveCR()
-	if isWildcardDNS, domain := getWildcardDNS(&effectiveCR.Spec); isWildcardDNS {
-		overrides.DNS = &dnsValues{
-			Wildcard: &wildcardDNSSettings{
-				Domain: domain,
-			},
-		}
-	}
 
 	dnsSuffix, err := vzconfig.GetDNSSuffix(ctx.Client(), effectiveCR)
 	if err != nil {
-		return ctrlerrors.RetryableError{
-			Source: ComponentName,
-			Cause:  err,
-		}
+		return ctx.Log().ErrorfNewErr("Failed getting DNS suffix: %v", err)
 	}
 
 	if externalDNSEnabled := vzconfig.IsExternalDNSEnabled(effectiveCR); externalDNSEnabled {
@@ -193,12 +200,6 @@ func appendVerrazzanoValues(ctx spi.ComponentContext, overrides *verrazzanoValue
 	overrides.Console = &consoleValues{Enabled: vzconfig.IsConsoleEnabled(effectiveCR)}
 	overrides.VerrazzanoOperator = &voValues{Enabled: isVMOEnabled(effectiveCR)}
 	overrides.MonitoringOperator = &vmoValues{Enabled: isVMOEnabled(effectiveCR)}
-	overrides.API = &apiValues{
-		Proxy: &proxySettings{
-			OidcProviderHost:          fmt.Sprintf("keycloak.%s.%s", envName, dnsSuffix),
-			OidcProviderHostInCluster: keycloakInClusterURL,
-		},
-	}
 	return nil
 }
 
@@ -246,6 +247,19 @@ func appendSecurityOverrides(effectiveCR *vzapi.Verrazzano, overrides *verrazzan
 		overrides.Security.MonitorSubjects = monSubjectMap
 	}
 	return nil
+}
+
+// appendVerrazzanoComponentOverrides - append overrides specified for the Verrazzano component
+func appendVerrazzanoComponentOverrides(effectiveCR *vzapi.Verrazzano, kvs []bom.KeyValue) []bom.KeyValue {
+	if effectiveCR.Spec.Components.Verrazzano != nil {
+		for _, arg := range effectiveCR.Spec.Components.Verrazzano.InstallArgs {
+			kvs = append(kvs, bom.KeyValue{
+				Key:   arg.Name,
+				Value: arg.Value,
+			})
+		}
+	}
+	return kvs
 }
 
 func appendVMIOverrides(effectiveCR *vzapi.Verrazzano, overrides *verrazzanoValues, storageOverrides *resourceRequestValues, kvs []bom.KeyValue) []bom.KeyValue {
@@ -297,14 +311,14 @@ func findStorageOverride(effectiveCR *vzapi.Verrazzano) (*resourceRequestValues,
 		pvcClaim := defaultVolumeSource.PersistentVolumeClaim
 		storageSpec, found := vzconfig.FindVolumeTemplate(pvcClaim.ClaimName, effectiveCR.Spec.VolumeClaimSpecTemplates)
 		if !found {
-			return nil, fmt.Errorf("Did not find matching storage volume template for claim %s", pvcClaim.ClaimName)
+			return nil, fmt.Errorf("Failed, did not find matching storage volume template for claim %s", pvcClaim.ClaimName)
 		}
 		storageString := storageSpec.Resources.Requests.Storage().String()
 		return &resourceRequestValues{
 			Storage: storageString,
 		}, nil
 	}
-	return nil, fmt.Errorf("Unsupported volume source: %v", defaultVolumeSource)
+	return nil, fmt.Errorf("Failed, unsupported volume source: %v", defaultVolumeSource)
 }
 
 func appendFluentdOverrides(effectiveCR *vzapi.Verrazzano, overrides *verrazzanoValues) {
@@ -350,18 +364,11 @@ func isVMOEnabled(vz *vzapi.Verrazzano) bool {
 	return vzconfig.IsPrometheusEnabled(vz) || vzconfig.IsKibanaEnabled(vz) || vzconfig.IsElasticsearchEnabled(vz) || vzconfig.IsGrafanaEnabled(vz)
 }
 
-func getWildcardDNS(vz *vzapi.VerrazzanoSpec) (bool, string) {
-	if vz.Components.DNS != nil && vz.Components.DNS.Wildcard != nil {
-		return true, vz.Components.DNS.Wildcard.Domain
-	}
-	return false, ""
-}
-
 // This function is used to fixup the fluentd daemonset on a managed cluster so that helm upgrade of Verrazzano does
 // not fail.  Prior to Verrazzano v1.0.1, the mcagent would change the environment variables CLUSTER_NAME and
 // ELASTICSEARCH_URL on a managed cluster to use valueFrom (from a secret) instead of using a Value. The helm chart
 // template for the fluentd daemonset expects a Value.
-func fixupFluentdDaemonset(log *zap.SugaredLogger, client clipkg.Client, namespace string) error {
+func fixupFluentdDaemonset(log vzlog.VerrazzanoLogger, client clipkg.Client, namespace string) error {
 	// Get the fluentd daemonset resource
 	fluentdNamespacedName := types.NamespacedName{Name: globalconst.FluentdDaemonSetName, Namespace: namespace}
 	daemonSet := appsv1.DaemonSet{}
@@ -370,8 +377,7 @@ func fixupFluentdDaemonset(log *zap.SugaredLogger, client clipkg.Client, namespa
 		return nil
 	}
 	if err != nil {
-		log.Errorf("Failed to find the fluentd DaemonSet %s, %v", daemonSet.Name, err)
-		return err
+		return log.ErrorfNewErr("Failed to find the fluentd DaemonSet %s, %v", daemonSet.Name, err)
 	}
 
 	// Find the fluent container and save it's container index
@@ -383,7 +389,7 @@ func fixupFluentdDaemonset(log *zap.SugaredLogger, client clipkg.Client, namespa
 		}
 	}
 	if fluentdIndex == -1 {
-		return fmt.Errorf("fluentd container not found in fluentd daemonset: %s", daemonSet.Name)
+		return log.ErrorfNewErr("Failed, fluentd container not found in fluentd daemonset: %s", daemonSet.Name)
 	}
 
 	// Check if env variables CLUSTER_NAME and ELASTICSEARCH_URL are using valueFrom.
@@ -415,13 +421,13 @@ func fixupFluentdDaemonset(log *zap.SugaredLogger, client clipkg.Client, namespa
 	// The secret must contain a cluster name
 	clusterName, ok := secret.Data[constants.ClusterNameData]
 	if !ok {
-		return fmt.Errorf("the secret named %s in namespace %s is missing the required field %s", secret.Name, secret.Namespace, constants.ClusterNameData)
+		return log.ErrorfNewErr("Failed, the secret named %s in namespace %s is missing the required field %s", secret.Name, secret.Namespace, constants.ClusterNameData)
 	}
 
 	// The secret must contain the Elasticsearch endpoint's URL
 	elasticsearchURL, ok := secret.Data[constants.ElasticsearchURLData]
 	if !ok {
-		return fmt.Errorf("the secret named %s in namespace %s is missing the required field %s", secret.Name, secret.Namespace, constants.ElasticsearchURLData)
+		return log.ErrorfNewErr("Failed, the secret named %s in namespace %s is missing the required field %s", secret.Name, secret.Namespace, constants.ElasticsearchURLData)
 	}
 
 	// Update the daemonset to use a Value instead of the valueFrom
@@ -433,7 +439,7 @@ func fixupFluentdDaemonset(log *zap.SugaredLogger, client clipkg.Client, namespa
 		daemonSet.Spec.Template.Spec.Containers[fluentdIndex].Env[elasticURLIndex].Value = string(elasticsearchURL)
 		daemonSet.Spec.Template.Spec.Containers[fluentdIndex].Env[elasticURLIndex].ValueFrom = nil
 	}
-	log.Infof("Updating fluentd daemonset to use valueFrom instead of Value for CLUSTER_NAME and ELASTICSEARCH_URL environment variables")
+	log.Debug("Updating fluentd daemonset to use valueFrom instead of Value for CLUSTER_NAME and ELASTICSEARCH_URL environment variables")
 	err = client.Update(context.TODO(), &daemonSet)
 	return err
 }
@@ -446,7 +452,7 @@ func createAndLabelNamespaces(ctx spi.ComponentContext) error {
 		return err
 	}
 	if _, err := secret.CheckImagePullSecret(ctx.Client(), globalconst.VerrazzanoSystemNamespace); err != nil {
-		return ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+		return ctx.Log().ErrorfNewErr("Failed checking for image pull secret: %v", err)
 	}
 	if err := namespace.CreateVerrazzanoMultiClusterNamespace(ctx.Client()); err != nil {
 		return err
@@ -454,26 +460,26 @@ func createAndLabelNamespaces(ctx spi.ComponentContext) error {
 	if isVMOEnabled(ctx.EffectiveCR()) {
 		// If the monitoring operator is enabled, create the monitoring namespace and copy the image pull secret
 		if err := namespace.CreateVerrazzanoMonitoringNamespace(ctx.Client()); err != nil {
-			return err
+			return ctx.Log().ErrorfNewErr("Failed creating Verrazzano Monitoring namespace: %v", err)
 		}
 		if _, err := secret.CheckImagePullSecret(ctx.Client(), globalconst.VerrazzanoMonitoringNamespace); err != nil {
-			return ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+			return ctx.Log().ErrorfNewErr("Failed checking for image pull secret: %v", err)
 		}
 	}
 	if vzconfig.IsKeycloakEnabled(ctx.EffectiveCR()) {
 		if err := namespace.CreateKeycloakNamespace(ctx.Client()); err != nil {
-			return ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+			return ctx.Log().ErrorfNewErr("Failed creating Keycloak namespace: %v", err)
 		}
 	}
 	if vzconfig.IsRancherEnabled(ctx.EffectiveCR()) {
 		if err := namespace.CreateAndLabelNamespace(ctx.Client(), globalconst.RancherOperatorSystemNamespace,
 			true, false); err != nil {
-			return ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+			return ctx.Log().ErrorfNewErr("Failed creating Rancher operator system namespace %s: %v", globalconst.RancherOperatorSystemNamespace, err)
 		}
 	}
 	// cattle-system NS must be created since the rancher NetworkPolicy, which is always installed, requires it
 	if err := namespace.CreateRancherNamespace(ctx.Client()); err != nil {
-		return ctrlerrors.RetryableError{Source: ComponentName, Cause: err}
+		return ctx.Log().ErrorfNewErr("Failed creating Rancher namespace: %v", err)
 	}
 	return nil
 }
@@ -545,13 +551,9 @@ func copySecret(ctx spi.ComponentContext, secretName string, logMsg string) erro
 	vzLog.Debugf("Copy %s secret result: %s", logMsg, opResult)
 	if err != nil {
 		if !errors.IsNotFound(err) {
-			return ctrlerrors.RetryableError{
-				Source: ComponentName,
-				Cause:  err,
-			}
+			return ctx.Log().ErrorfNewErr("Failed in create/update for copysecret: %v", err)
 		}
-		vzLog.Errorf("The %s secret %s not found in namespace %s", logMsg, secretName, constants.VerrazzanoInstallNamespace)
-		return ctrlerrors.RetryableError{Source: ComponentName}
+		return vzLog.ErrorfNewErr("Failed, the %s secret %s not found in namespace %s", logMsg, secretName, constants.VerrazzanoInstallNamespace)
 	}
 
 	return nil
@@ -563,7 +565,7 @@ func isVerrazzanoSecretReady(ctx spi.ComponentContext) bool {
 		types.NamespacedName{Name: "verrazzano", Namespace: globalconst.VerrazzanoSystemNamespace},
 		&corev1.Secret{}); err != nil {
 		if !errors.IsNotFound(err) {
-			ctx.Log().Error("Unexpected error getting verrazzano secret: %s", err)
+			ctx.Log().Errorf("Failed, unexpected error getting verrazzano secret: %v", err)
 			return false
 		}
 		ctx.Log().Debugf("Verrazzano secret not found")
@@ -574,8 +576,8 @@ func isVerrazzanoSecretReady(ctx spi.ComponentContext) bool {
 
 //cleanTempFiles - Clean up the override temp files in the temp dir
 func cleanTempFiles(ctx spi.ComponentContext) {
-	if err := vzos.RemoveTempFiles(ctx.Log(), tmpFileCleanPattern); err != nil {
-		ctx.Log().Errorf("Error deleting temp files: %s", err.Error())
+	if err := vzos.RemoveTempFiles(ctx.Log().GetZapLogger(), tmpFileCleanPattern); err != nil {
+		ctx.Log().Errorf("Failed deleting temp files: %v", err)
 	}
 }
 
@@ -583,7 +585,7 @@ func cleanTempFiles(ctx spi.ComponentContext) {
 func fixupElasticSearchReplicaCount(ctx spi.ComponentContext, namespace string) error {
 	// Only apply this fix to clusters with Elasticsearch enabled.
 	if !vzconfig.IsElasticsearchEnabled(ctx.EffectiveCR()) {
-		ctx.Log().Info("Elasticsearch Post Upgrade: Replica count update unnecessary on managed cluster.")
+		ctx.Log().Debug("Elasticsearch Post Upgrade: Replica count update unnecessary on managed cluster.")
 		return nil
 	}
 
@@ -594,50 +596,42 @@ func fixupElasticSearchReplicaCount(ctx spi.ComponentContext, namespace string) 
 	}
 	sourceVer, err := semver.NewSemVersion(ctx.ActualCR().Status.Version)
 	if err != nil {
-		ctx.Log().Errorf("Elasticsearch Post Upgrade: Invalid source Verrazzano version: %s", err)
-		return err
+		return ctx.Log().ErrorfNewErr("Failed Elasticsearch post-upgrade: Invalid source Verrazzano version: %v", err)
 	}
 	if sourceVer.IsGreatherThan(ver1_1_0) || sourceVer.IsEqualTo(ver1_1_0) {
-		ctx.Log().Info("Elasticsearch Post Upgrade: Replica count update unnecessary for source Verrazzano version %v.", sourceVer.ToString())
+		ctx.Log().Debug("Elasticsearch Post Upgrade: Replica count update unnecessary for source Verrazzano version %v.", sourceVer.ToString())
 		return nil
 	}
 
 	// Wait for an Elasticsearch (i.e., label app=system-es-master) pod with container (i.e. es-master) to be ready.
 	pods, err := waitForPodsWithReadyContainer(ctx.Client(), 15*time.Second, 5*time.Minute, containerName, clipkg.MatchingLabels{"app": workloadName}, clipkg.InNamespace(namespace))
 	if err != nil {
-		ctx.Log().Errorf("Elasticsearch Post Upgrade: Error getting the Elasticsearch pods: %s", err)
-		return err
+		return ctx.Log().ErrorfNewErr("Failed getting the Elasticsearch pods during post-upgrade: %v", err)
 	}
 	if len(pods) == 0 {
-		err := fmt.Errorf("no pods found")
-		ctx.Log().Errorf("Elasticsearch Post Upgrade: Failed to find Elasticsearch pods: %s", err)
-		return err
+		return ctx.Log().ErrorfNewErr("Failed to find Elasticsearch pods during post-upgrade: %v", err)
 	}
 	pod := pods[0]
 
 	// Find the Elasticsearch HTTP control container port.
 	httpPort, err := getNamedContainerPortOfContainer(pod, containerName, portName)
 	if err != nil {
-		ctx.Log().Errorf("Elasticsearch Post Upgrade: Failed to find HTTP port of Elasticsearch container: %s", err)
-		return err
+		return ctx.Log().ErrorfNewErr("Failed to find HTTP port of Elasticsearch container during post-upgrade: %v", err)
 	}
 	if httpPort <= 0 {
-		err := fmt.Errorf("no port found")
-		ctx.Log().Errorf("Elasticsearch Post Upgrade: Failed to find Elasticsearch port: %s", err)
-		return err
+		return ctx.Log().ErrorfNewErr("Failed to find Elasticsearch port during post-upgrade: %v", err)
 	}
 
 	// Set the the number of replicas for the Verrazzano indices
 	// to something valid in single node Elasticsearch cluster
-	ctx.Log().Info("Elasticsearch Post Upgrade: Getting the health of the Elasticsearch cluster")
+	ctx.Log().Debug("Elasticsearch Post Upgrade: Getting the health of the Elasticsearch cluster")
 	getCmd := execCommand("kubectl", "exec", pod.Name, "-n", namespace, "-c", containerName, "--", "sh", "-c",
 		fmt.Sprintf("curl -v -XGET -s -k --fail http://localhost:%d/_cluster/health", httpPort))
 	output, err := getCmd.Output()
 	if err != nil {
-		ctx.Log().Errorf("Elasticsearch Post Upgrade: Error getting the Elasticsearch cluster health: %s", err)
-		return err
+		return ctx.Log().ErrorfNewErr("Failed in Elasticsearch post upgrade: error getting the Elasticsearch cluster health: %v", err)
 	}
-	ctx.Log().Info("Elasticsearch Post Upgrade: Output of the health of the Elasticsearch cluster %v", string(output))
+	ctx.Log().Debugf("Elasticsearch Post Upgrade: Output of the health of the Elasticsearch cluster %s", string(output))
 	// If the data node count is seen as 1 then the node is considered as single node cluster
 	if strings.Contains(string(output), `"number_of_data_nodes":1,`) {
 		// Login to Elasticsearch and update index settings for single data node elasticsearch cluster
@@ -645,12 +639,11 @@ func fixupElasticSearchReplicaCount(ctx spi.ComponentContext, namespace string) 
 			fmt.Sprintf(`curl -v -XPUT -d '{"index":{"auto_expand_replicas":"0-1"}}' --header 'Content-Type: application/json' -s -k --fail http://localhost:%d/%s/_settings`, httpPort, indexPattern))
 		_, err = putCmd.Output()
 		if err != nil {
-			ctx.Log().Errorf("Elasticsearch Post Upgrade: Error logging into Elasticsearch: %s", err)
-			return err
+			return ctx.Log().ErrorfNewErr("Failed in Elasticsearch post-upgrade: Error logging into Elasticsearch: %v", err)
 		}
-		ctx.Log().Info("Elasticsearch Post Upgrade: Successfully updated Elasticsearch index settings")
+		ctx.Log().Debug("Elasticsearch Post Upgrade: Successfully updated Elasticsearch index settings")
 	}
-	ctx.Log().Info("Elasticsearch Post Upgrade: Completed successfully")
+	ctx.Log().Debug("Elasticsearch Post Upgrade: Completed successfully")
 	return nil
 }
 
@@ -664,7 +657,7 @@ func getNamedContainerPortOfContainer(pod corev1.Pod, containerName string, port
 			}
 		}
 	}
-	return -1, fmt.Errorf("no port named %s found in container %s of pod %s", portName, containerName, pod.Name)
+	return -1, fmt.Errorf("Failed, no port named %s found in container %s of pod %s", portName, containerName, pod.Name)
 }
 
 func getPodsWithReadyContainer(client clipkg.Client, containerName string, podSelectors ...clipkg.ListOption) ([]corev1.Pod, error) {

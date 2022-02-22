@@ -1,4 +1,4 @@
-// Copyright (c) 2020, 2021, Oracle and/or its affiliates.
+// Copyright (c) 2020, 2022, Oracle and/or its affiliates.
 // Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
 
 package navigation
@@ -6,6 +6,7 @@ package navigation
 import (
 	"context"
 	"fmt"
+	"github.com/verrazzano/verrazzano/pkg/log/vzlog"
 	"testing"
 
 	oamrt "github.com/crossplane/crossplane-runtime/apis/core/v1alpha1"
@@ -13,12 +14,12 @@ import (
 	asserts "github.com/stretchr/testify/assert"
 	vzapi "github.com/verrazzano/verrazzano/application-operator/apis/oam/v1alpha1"
 	"github.com/verrazzano/verrazzano/application-operator/mocks"
+	"go.uber.org/zap"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -43,7 +44,7 @@ func TestFetchTrait(t *testing.T) {
 			trait.Name = "test-name"
 			return nil
 		})
-	trait, err = FetchTrait(context.TODO(), cli, ctrl.Log, name)
+	trait, err = FetchTrait(context.TODO(), cli, zap.S(), name)
 	mocker.Finish()
 	assert.NoError(err)
 	assert.Equal("test-name", trait.Name)
@@ -58,7 +59,7 @@ func TestFetchTrait(t *testing.T) {
 		DoAndReturn(func(ctx context.Context, key client.ObjectKey, trait *vzapi.MetricsTrait) error {
 			return k8serrors.NewNotFound(schema.GroupResource{Group: trait.APIVersion, Resource: trait.Kind}, key.Name)
 		})
-	trait, err = FetchTrait(context.TODO(), cli, ctrl.Log, name)
+	trait, err = FetchTrait(context.TODO(), cli, zap.S(), name)
 	mocker.Finish()
 	assert.Nil(trait)
 	assert.NoError(err)
@@ -73,7 +74,7 @@ func TestFetchTrait(t *testing.T) {
 			return fmt.Errorf("test-error")
 		})
 	name = types.NamespacedName{Namespace: "test-namespace", Name: "test-name"}
-	trait, err = FetchTrait(context.TODO(), cli, ctrl.Log, name)
+	trait, err = FetchTrait(context.TODO(), cli, zap.S(), name)
 	mocker.Finish()
 	assert.Nil(trait)
 	assert.Error(err)
@@ -108,7 +109,7 @@ func TestFetchWorkloadFromTrait(t *testing.T) {
 			obj.SetName(key.Name)
 			return nil
 		})
-	uns, err = FetchWorkloadFromTrait(ctx, cli, ctrl.Log, trait)
+	uns, err = FetchWorkloadFromTrait(ctx, cli, vzlog.DefaultLogger(), trait)
 	mocker.Finish()
 	assert.NoError(err)
 	assert.NotNil(uns)
@@ -130,7 +131,7 @@ func TestFetchWorkloadFromTrait(t *testing.T) {
 		DoAndReturn(func(ctx context.Context, key client.ObjectKey, obj *unstructured.Unstructured) error {
 			return fmt.Errorf("test-error")
 		})
-	uns, err = FetchWorkloadFromTrait(ctx, cli, ctrl.Log, trait)
+	uns, err = FetchWorkloadFromTrait(ctx, cli, vzlog.DefaultLogger(), trait)
 	mocker.Finish()
 	assert.Nil(uns)
 	assert.Error(err)
@@ -182,7 +183,7 @@ func TestFetchWorkloadFromTrait(t *testing.T) {
 			return nil
 		})
 
-	uns, err = FetchWorkloadFromTrait(ctx, cli, ctrl.Log, trait)
+	uns, err = FetchWorkloadFromTrait(ctx, cli, vzlog.DefaultLogger(), trait)
 
 	mocker.Finish()
 	assert.NoError(err)
@@ -208,7 +209,7 @@ func TestFetchWorkloadFromTrait(t *testing.T) {
 			obj.SetName(key.Name)
 			return nil
 		})
-	uns, err = FetchWorkloadFromTrait(ctx, cli, ctrl.Log, trait)
+	uns, err = FetchWorkloadFromTrait(ctx, cli, vzlog.DefaultLogger(), trait)
 	mocker.Finish()
 	assert.NoError(err)
 	assert.NotNil(uns)

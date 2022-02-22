@@ -8,6 +8,22 @@ spec:
   components:
     applicationOperator:
       enabled: true
+    authProxy:
+      enabled: true
+      kubernetes:
+        replicas: 2
+        affinity:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchExpressions:
+                      - key: app
+                        operator: In
+                        values:
+                          - verrazzano-authproxy
+                  topologyKey: kubernetes.io/hostname
     certManager:
       enabled: true
       certificate:
@@ -28,10 +44,10 @@ spec:
       elasticsearchURL: https://myes.mycorp.com
       elasticsearchSecret: mysecret
       extraVolumeMounts:
-      - source: /u01/datarw
-        readOnly: false
-      - source: /u01/dataro
-        readOnly: true
+        - source: /u01/datarw
+          readOnly: false
+        - source: /u01/dataro
+          readOnly: true
     grafana:
       enabled: true
     ingress:
@@ -39,6 +55,36 @@ spec:
       type: LoadBalancer
     istio:
       enabled: true
+      ingress:
+        kubernetes:
+          replicas: 2
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    labelSelector:
+                      matchExpressions:
+                        - key: app
+                          operator: In
+                          values:
+                            - istio-ingressgateway
+                    topologyKey: kubernetes.io/hostname
+      egress:
+        kubernetes:
+          replicas: 2
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+                - weight: 100
+                  podAffinityTerm:
+                    labelSelector:
+                      matchExpressions:
+                        - key: app
+                          operator: In
+                          values:
+                            - istio-egressgateway
+                    topologyKey: kubernetes.io/hostname
     kiali:
       enabled: true
     keycloak:

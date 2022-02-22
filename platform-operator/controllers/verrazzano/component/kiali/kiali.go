@@ -6,6 +6,9 @@ package kiali
 import (
 	"context"
 	"fmt"
+
+	ctrlerrors "github.com/verrazzano/verrazzano/pkg/controller/errors"
+
 	"github.com/verrazzano/verrazzano/pkg/bom"
 	"github.com/verrazzano/verrazzano/platform-operator/constants"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
@@ -21,9 +24,6 @@ import (
 )
 
 const (
-	// ComponentName is the name of the component
-	ComponentName = "kiali-server"
-
 	kialiHostName    = "kiali.vmi.system"
 	kialiSystemName  = "vmi-system-kiali"
 	kialiServicePort = "20001"
@@ -32,11 +32,12 @@ const (
 )
 
 // isKialiReady checks if the Kiali deployment is ready
-func isKialiReady(ctx spi.ComponentContext, _ string, namespace string) bool {
+func isKialiReady(ctx spi.ComponentContext) bool {
 	deployments := []types.NamespacedName{
-		{Name: kialiSystemName, Namespace: namespace},
+		{Name: kialiSystemName, Namespace: ComponentNamespace},
 	}
-	return status.DeploymentsReady(ctx.Log(), ctx.Client(), deployments, 1)
+	prefix := fmt.Sprintf("Component %s", ctx.GetComponent())
+	return status.DeploymentsReady(ctx.Log(), ctx.Client(), deployments, 1, prefix)
 }
 
 // AppendOverrides Build the set of Kiali overrides for the helm install
@@ -58,10 +59,10 @@ func createOrUpdateKialiIngress(ctx spi.ComponentContext, namespace string) erro
 	ingress := v1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{Name: kialiSystemName, Namespace: namespace},
 	}
-	opResult, err := controllerruntime.CreateOrUpdate(context.TODO(), ctx.Client(), &ingress, func() error {
+	_, err := controllerruntime.CreateOrUpdate(context.TODO(), ctx.Client(), &ingress, func() error {
 		dnsSubDomain, err := vzconfig.BuildDNSDomain(ctx.Client(), ctx.EffectiveCR())
 		if err != nil {
-			return err
+			return ctx.Log().ErrorfNewErr("Failed building DNS domain name: %v", err)
 		}
 		ingressTarget := fmt.Sprintf("verrazzano-ingress.%s", dnsSubDomain)
 
@@ -114,7 +115,9 @@ func createOrUpdateKialiIngress(ctx spi.ComponentContext, namespace string) erro
 		}
 		return nil
 	})
-	ctx.Log().Debugf("Kiali ingress operation result: %s", opResult)
+	if ctrlerrors.ShouldLogKubenetesAPIError(err) {
+		return ctx.Log().ErrorfNewErr("Failed create/update Kiali ingress: %v", err)
+	}
 	return err
 }
 
@@ -122,7 +125,7 @@ func createOrUpdateAuthPolicy(ctx spi.ComponentContext) error {
 	authPol := istioclisec.AuthorizationPolicy{
 		ObjectMeta: metav1.ObjectMeta{Namespace: constants.VerrazzanoSystemNamespace, Name: "vmi-system-kiali-authzpol"},
 	}
-	opResult, err := controllerruntime.CreateOrUpdate(context.TODO(), ctx.Client(), &authPol, func() error {
+	_, err := controllerruntime.CreateOrUpdate(context.TODO(), ctx.Client(), &authPol, func() error {
 		authPol.Spec = securityv1beta1.AuthorizationPolicy{
 			Selector: &istiov1beta1.WorkloadSelector{
 				MatchLabels: map[string]string{
@@ -161,7 +164,9 @@ func createOrUpdateAuthPolicy(ctx spi.ComponentContext) error {
 		}
 		return nil
 	})
-	ctx.Log().Debugf("Kiali auth policy op result: %s", opResult)
+	if ctrlerrors.ShouldLogKubenetesAPIError(err) {
+		return ctx.Log().ErrorfNewErr("Failed create/update Kiali auth policy: %v", err)
+	}
 	return err
 }
 
