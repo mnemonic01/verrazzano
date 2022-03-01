@@ -150,7 +150,12 @@ func (c verrazzanoComponent) IsEnabled(effectiveCR *vzapi.Verrazzano) bool {
 	if comp == nil || comp.Enabled == nil {
 		return true
 	}
-	return *comp.Enabled
+	return *comp.Enabled || isAnyVzComponentEnabled(effectiveCR)
+}
+
+func isAnyVzComponentEnabled(cr *vzapi.Verrazzano) bool {
+	return vzconfig.IsVMOEnabled(cr) || vzconfig.IsConsoleEnabled(cr) ||
+		vzconfig.IsFluentdEnabled(cr)
 }
 
 // ValidateUpdate checks if the specified new Verrazzano CR is valid for this component to be updated

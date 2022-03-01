@@ -124,7 +124,7 @@ func checkDependencies(c spi.Component, context spi.ComponentContext, visited ma
 		if trace, err := checkDependencies(dependency, context, visited, stateMap); err != nil {
 			return trace, err
 		}
-		if !dependency.IsReady(context) {
+		if dependency.IsEnabled(context) && !dependency.IsReady(context) {
 			stateMap[dependencyName] = false // dependency is not ready
 			continue
 		}

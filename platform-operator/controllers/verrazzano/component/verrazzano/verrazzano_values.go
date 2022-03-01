@@ -39,6 +39,7 @@ type verrazzanoValues struct {
 	Kubernetes         *kubernetesValues          `json:"kubernetes,omitempty"`
 	Externaldns        *externalDNSValues         `json:"externaldns,omitempty"`
 	PrometheusOperator *prometheusOperatorValues  `json:"prometheusOperator,omitempty"`
+	Istio              *istioValues               `json:"istio,omitempty"`
 }
 
 type subject struct {
@@ -104,6 +105,10 @@ type keycloakValues struct {
 
 type rancherValues struct {
 	Enabled bool `json:"enabled"` // Always write
+}
+
+type istioValues struct {
+	Enabled bool `json:"enabled"`
 }
 
 type kibanaValues struct {
