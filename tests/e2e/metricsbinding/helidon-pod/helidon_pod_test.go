@@ -15,43 +15,33 @@ import (
 )
 
 const (
-	longWaitTimeout      = 15 * time.Minute
-	longPollingInterval  = 20 * time.Second
 	shortWaitTimeout     = 10 * time.Minute
 	shortPollingInterval = 10 * time.Second
-	namespace            = "hello-helidon-namespace"
 	applicationPodPrefix = "hello-helidon-pod"
 	yamlPath             = "tests/e2e/metricsbinding/testdata/hello-helidon-pod.yaml"
-	promConfigJobName    = "hello-helidon-namespace_hello-helidon-pod_v1_Pod"
+	promConfigJobName    = "_hello-helidon-pod_v1_Pod"
 )
 
-var t = framework.NewTestFramework("podworkload")
+var (
+	t                  = framework.NewTestFramework("podworkload")
+	generatedNamespace = pkg.GenerateNamespace("hello-helidon-namespace")
+	clusterDump        = pkg.NewClusterDumpWrapper()
+)
 
-var _ = t.BeforeSuite(func() {
+var _ = clusterDump.BeforeSuite(func() {
 	start := time.Now()
-	metricsbinding.DeployApplication(namespace, yamlPath)
+	metricsbinding.DeployApplication(namespace, yamlPath, applicationPodPrefix)
 	metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 })
 
-var clusterDump = pkg.NewClusterDumpWrapper()
 var _ = clusterDump.AfterEach(func() {}) // Dump cluster if spec fails
 var _ = clusterDump.AfterSuite(func() {  // Dump cluster if aftersuite fails
-	metricsbinding.UndeployApplication(namespace, yamlPath, promConfigJobName)
+	metricsbinding.UndeployApplication(namespace, yamlPath, namespace+promConfigJobName)
 })
 
 var _ = t.AfterEach(func() {})
 
 var _ = t.Describe("Verify application.", Label("f:app-lcm.poko"), func() {
-	t.Context("Pod.", func() {
-		// GIVEN the app is deployed
-		// WHEN the running pods are checked
-		// THEN the Helidon pod should exist
-		t.It("Verify 'hello-helidon-pod' pod is running", func() {
-			Eventually(func() bool {
-				return pkg.PodsRunning(namespace, []string{applicationPodPrefix})
-			}, longWaitTimeout, longPollingInterval).Should(BeTrue())
-		})
-	})
 
 	// GIVEN the Helidon app is deployed and the pods are running
 	// WHEN the Prometheus metrics in the app namespace are scraped
@@ -60,7 +50,7 @@ var _ = t.Describe("Verify application.", Label("f:app-lcm.poko"), func() {
 		func() {
 			t.It("Check Prometheus config map for scrape target", func() {
 				Eventually(func() bool {
-					return pkg.IsAppInPromConfig(promConfigJobName)
+					return pkg.IsAppInPromConfig(namespace + promConfigJobName)
 				}, shortWaitTimeout, shortPollingInterval).Should(BeTrue(), "Expected application to be found in Prometheus config")
 			})
 			t.It("Retrieve Prometheus scraped metrics for 'hello-helidon-pod' Pod", func() {

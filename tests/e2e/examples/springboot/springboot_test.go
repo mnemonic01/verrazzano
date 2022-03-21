@@ -24,11 +24,14 @@ var longWaitTimeout = 15 * time.Minute
 var longPollingInterval = 20 * time.Second
 
 var (
-	t                  = framework.NewTestFramework("springboot")
-	generatedNamespace = pkg.GenerateNamespace("springboot")
+	t                        = framework.NewTestFramework("springboot")
+	generatedNamespace       = pkg.GenerateNamespace("springboot")
+	imagePullWaitTimeout     = 40 * time.Minute
+	imagePullPollingInterval = 30 * time.Second
 )
 
 var _ = t.BeforeSuite(func() {
+
 	if !skipDeploy {
 		start := time.Now()
 		pkg.DeploySpringBootApplication(namespace)
@@ -39,18 +42,29 @@ var _ = t.BeforeSuite(func() {
 	// GIVEN springboot app is deployed
 	// WHEN the component and appconfig are created
 	// THEN the expected pod must be running in the test namespace
+	pkg.Log(pkg.Info, "Container image pull check")
 	Eventually(func() bool {
-		return pkg.PodsRunning(namespace, expectedPodsSpringBootApp)
+		return pkg.ContainerImagePullWait(namespace, expectedPodsSpringBootApp)
+	}, imagePullWaitTimeout, imagePullPollingInterval).Should(BeTrue())
+	Eventually(func() bool {
+		result, err := pkg.PodsRunning(namespace, expectedPodsSpringBootApp)
+		if err != nil {
+			AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", namespace, err))
+		}
+		return result
 	}, longWaitTimeout, pollingInterval).Should(BeTrue())
+	beforeSuitePassed = true
 })
 
 var failed = false
+var beforeSuitePassed = false
+
 var _ = t.AfterEach(func() {
 	failed = failed || CurrentSpecReport().Failed()
 })
 
 var _ = t.AfterSuite(func() {
-	if failed {
+	if failed || !beforeSuitePassed {
 		pkg.ExecuteClusterDumpWithEnvVarConfig()
 	}
 	if !skipUndeploy {
@@ -62,17 +76,6 @@ var _ = t.AfterSuite(func() {
 
 var _ = t.Describe("Spring Boot test", Label("f:app-lcm.oam",
 	"f:app-lcm.spring-workload"), func() {
-	// Verify springboot-workload pod is running
-	// GIVEN springboot app is deployed
-	// WHEN the component and appconfig are created
-	// THEN the expected pod must be running in the test namespace
-	t.Context("expected pods", func() {
-		t.It("are running", func() {
-			Eventually(func() bool {
-				return pkg.PodsRunning(namespace, expectedPodsSpringBootApp)
-			}, longWaitTimeout, pollingInterval).Should(BeTrue())
-		})
-	})
 
 	var host = ""
 	var err error

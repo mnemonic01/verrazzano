@@ -4,7 +4,7 @@
 package verrazzano
 
 import (
-	"context"
+	vzcontext "github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/context"
 
 	"github.com/verrazzano/verrazzano/pkg/log/vzlog"
 	"github.com/verrazzano/verrazzano/pkg/semver"
@@ -22,7 +22,13 @@ import (
 // 3. Loop through all components before returning, except for the case
 //    where update status fails, in which case we exit the function and requeue
 //    immediately.
-func (r *Reconciler) reconcileComponents(_ context.Context, spiCtx spi.ComponentContext) (ctrl.Result, error) {
+func (r *Reconciler) reconcileComponents(vzctx vzcontext.VerrazzanoContext) (ctrl.Result, error) {
+	spiCtx, err := spi.NewContext(vzctx.Log, r, vzctx.ActualCR, r.DryRun)
+	if err != nil {
+		spiCtx.Log().Errorf("Failed to create component context: %v", err)
+		return newRequeueWithDelay(), err
+	}
+
 	cr := spiCtx.ActualCR()
 	spiCtx.Log().Progress("Reconciling components for Verrazzano installation")
 
@@ -45,6 +51,20 @@ func (r *Reconciler) reconcileComponents(_ context.Context, spiCtx spi.Component
 			compLog.Debugf("Did not find status details in map for component %s", comp.Name())
 			continue
 		}
+		if checkConfigUpdated(spiCtx, componentStatus) {
+			if err := r.updateComponentStatus(compContext, "PreInstall started", vzapi.CondPreInstall); err != nil {
+				return ctrl.Result{Requeue: true}, err
+			}
+			compLog.Oncef("Reset component %s state to %v for generation %v", compName, componentStatus.State, spiCtx.ActualCR().Generation)
+			if spiCtx.ActualCR().Status.State == vzapi.VzStateReady {
+				err = r.setInstallingState(vzctx.Log, spiCtx.ActualCR())
+				compLog.Oncef("Reset Verrazzano state to %v for generation %v", spiCtx.ActualCR().Status.State, spiCtx.ActualCR().Generation)
+				if err != nil {
+					spiCtx.Log().Errorf("Failed to reset state: %v", err)
+					return newRequeueWithDelay(), err
+				}
+			}
+		}
 		switch componentStatus.State {
 		case vzapi.CompStateReady:
 			// For delete, we should look at the VZ resource delete timestamp and shift into Quiescing/Uninstalling state
@@ -52,9 +72,13 @@ func (r *Reconciler) reconcileComponents(_ context.Context, spiCtx spi.Component
 			if err := comp.Reconcile(spiCtx); err != nil {
 				return newRequeueWithDelay(), err
 			}
+			// After restore '.status.instance' is empty and not updated. Below change will populate the correct values when comp state is Ready
+			if err := r.updateComponentStatus(compContext, "Component is Ready", vzapi.CondInstallComplete); err != nil {
+				return ctrl.Result{Requeue: true}, err
+			}
 			continue
 		case vzapi.CompStateDisabled:
-			if !comp.IsEnabled(compContext) {
+			if !comp.IsEnabled(compContext.EffectiveCR()) {
 				compLog.Oncef("Component %s is disabled, skipping install", compName)
 				// User has disabled component in Verrazzano CR, don't install
 				continue
@@ -118,6 +142,11 @@ func (r *Reconciler) reconcileComponents(_ context.Context, spiCtx spi.Component
 		return newRequeueWithDelay(), nil
 	}
 	return ctrl.Result{}, nil
+}
+
+func checkConfigUpdated(ctx spi.ComponentContext, componentStatus *vzapi.ComponentStatusDetails) bool {
+	return (componentStatus.State == vzapi.CompStateReady) &&
+		(ctx.ActualCR().Generation > componentStatus.LastReconciledGeneration)
 }
 
 // Check if the component can be installed in this Verrazzano installation based on version

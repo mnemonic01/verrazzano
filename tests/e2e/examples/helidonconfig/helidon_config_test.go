@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/verrazzano/verrazzano/pkg/test/framework"
 	"github.com/verrazzano/verrazzano/pkg/test/framework/metrics"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -17,10 +18,12 @@ import (
 )
 
 const (
-	longWaitTimeout      = 20 * time.Minute
-	longPollingInterval  = 20 * time.Second
-	shortPollingInterval = 10 * time.Second
-	shortWaitTimeout     = 5 * time.Minute
+	longWaitTimeout          = 20 * time.Minute
+	longPollingInterval      = 20 * time.Second
+	shortPollingInterval     = 10 * time.Second
+	shortWaitTimeout         = 5 * time.Minute
+	imagePullWaitTimeout     = 40 * time.Minute
+	imagePullPollingInterval = 30 * time.Second
 )
 
 var (
@@ -45,9 +48,13 @@ var _ = t.BeforeSuite(func() {
 		Eventually(func() error {
 			return pkg.CreateOrUpdateResourceFromFileInGeneratedNamespace("examples/helidon-config/helidon-config-app.yaml", namespace)
 		}, shortWaitTimeout, shortPollingInterval, "Failed to create helidon-config application resource").ShouldNot(HaveOccurred())
+		beforeSuitePassed = true
 		metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 	}
 
+	Eventually(func() bool {
+		return pkg.ContainerImagePullWait(namespace, expectedPodsHelidonConfig)
+	}, imagePullWaitTimeout, imagePullPollingInterval).Should(BeTrue())
 	// Verify helidon-config-deployment pod is running
 	// GIVEN OAM helidon-config app is deployed
 	// WHEN the component and appconfig are created
@@ -56,28 +63,52 @@ var _ = t.BeforeSuite(func() {
 })
 
 var failed = false
+var beforeSuitePassed = false
+
 var _ = t.AfterEach(func() {
 	failed = failed || CurrentSpecReport().Failed()
 })
 
 var _ = t.AfterSuite(func() {
-	if failed {
+
+	if failed || !beforeSuitePassed {
 		pkg.ExecuteClusterDumpWithEnvVarConfig()
 	}
 	if !skipUndeploy {
 		start := time.Now()
 		// undeploy the application here
+		pkg.Log(pkg.Info, "Delete application")
 		Eventually(func() error {
 			return pkg.DeleteResourceFromFileInGeneratedNamespace("examples/helidon-config/helidon-config-app.yaml", namespace)
 		}, shortWaitTimeout, shortPollingInterval).ShouldNot(HaveOccurred())
 
+		pkg.Log(pkg.Info, "Delete components")
 		Eventually(func() error {
 			return pkg.DeleteResourceFromFileInGeneratedNamespace("examples/helidon-config/helidon-config-comp.yaml", namespace)
 		}, shortWaitTimeout, shortPollingInterval).ShouldNot(HaveOccurred())
 
+		pkg.Log(pkg.Info, "Wait for application pods to terminate")
+		Eventually(func() bool {
+			podsTerminated, _ := pkg.PodsNotRunning(namespace, expectedPodsHelidonConfig)
+			return podsTerminated
+		}, shortWaitTimeout, shortPollingInterval).Should(BeTrue())
+
+		pkg.Log(pkg.Info, "Delete namespace")
 		Eventually(func() error {
 			return pkg.DeleteNamespace(namespace)
 		}, shortWaitTimeout, shortPollingInterval).ShouldNot(HaveOccurred())
+
+		pkg.Log(pkg.Info, "Wait for Finalizer to be removed")
+		Eventually(func() bool {
+			return pkg.CheckNamespaceFinalizerRemoved(namespace)
+		}, shortWaitTimeout, shortPollingInterval).Should(BeTrue())
+
+		pkg.Log(pkg.Info, "Wait for namespace to be removed")
+		Eventually(func() bool {
+			_, err := pkg.GetNamespace(namespace)
+			return err != nil && errors.IsNotFound(err)
+		}, shortWaitTimeout, shortPollingInterval).Should(BeTrue())
+
 		metrics.Emit(t.Metrics.With("undeployment_elapsed_time", time.Since(start).Milliseconds()))
 	}
 })
@@ -86,12 +117,6 @@ var (
 	expectedPodsHelidonConfig = []string{"helidon-config-deployment"}
 	waitTimeout               = 10 * time.Minute
 	pollingInterval           = 30 * time.Second
-)
-
-const (
-	//testNamespace      = "helidon-config"
-	istioNamespace     = "istio-system"
-	ingressServiceName = "istio-ingressgateway"
 )
 
 var _ = t.Describe("Helidon Config OAM App test", Label("f:app-lcm.oam",
@@ -172,7 +197,11 @@ var _ = t.Describe("Helidon Config OAM App test", Label("f:app-lcm.oam",
 })
 
 func helidonConfigPodsRunning() bool {
-	return pkg.PodsRunning(namespace, expectedPodsHelidonConfig)
+	result, err := pkg.PodsRunning(namespace, expectedPodsHelidonConfig)
+	if err != nil {
+		AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", namespace, err))
+	}
+	return result
 }
 
 func appMetricsExists() bool {

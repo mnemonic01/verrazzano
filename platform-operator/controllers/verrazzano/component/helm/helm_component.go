@@ -5,13 +5,10 @@ package helm
 
 import (
 	"fmt"
-	"io/ioutil"
-	"os"
-	"strings"
-
 	"github.com/verrazzano/verrazzano/pkg/bom"
 	ctrlerrors "github.com/verrazzano/verrazzano/pkg/controller/errors"
 	"github.com/verrazzano/verrazzano/pkg/helm"
+	helmcli "github.com/verrazzano/verrazzano/pkg/helm"
 	"github.com/verrazzano/verrazzano/pkg/log/vzlog"
 	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 	"github.com/verrazzano/verrazzano/platform-operator/constants"
@@ -19,14 +16,20 @@ import (
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/secret"
 	"github.com/verrazzano/verrazzano/platform-operator/internal/config"
 	"github.com/verrazzano/verrazzano/platform-operator/internal/k8s/status"
+	"io/ioutil"
 	"k8s.io/apimachinery/pkg/types"
+	"os"
 	clipkg "sigs.k8s.io/controller-runtime/pkg/client"
+	"strings"
 )
 
 // HelmComponent struct needed to implement a component
 type HelmComponent struct {
 	// ReleaseName is the helm chart release name
 	ReleaseName string
+
+	// JSONName is the josn name of the verrazzano component in CRD
+	JSONName string
 
 	// ChartDir is the helm chart directory
 	ChartDir string
@@ -79,7 +82,12 @@ type HelmComponent struct {
 
 	// The minimum required Verrazzano version.
 	MinVerrazzanoVersion string
-	IngressNames         []types.NamespacedName
+
+	// Ingress names associated with the component
+	IngressNames []types.NamespacedName
+
+	// Certificates associated with the component
+	Certificates []types.NamespacedName
 }
 
 // Verify that HelmComponent implements Component
@@ -106,11 +114,11 @@ type upgradeFuncSig func(log vzlog.VerrazzanoLogger, releaseName string, namespa
 // upgradeFunc is the default upgrade function
 var upgradeFunc upgradeFuncSig = helm.Upgrade
 
-func setUpgradeFunc(f upgradeFuncSig) {
+func SetUpgradeFunc(f upgradeFuncSig) {
 	upgradeFunc = f
 }
 
-func setDefaultUpgradeFunc() {
+func SetDefaultUpgradeFunc() {
 	upgradeFunc = helm.Upgrade
 }
 
@@ -122,6 +130,11 @@ func (h HelmComponent) Name() string {
 	return h.ReleaseName
 }
 
+// GetJsonName returns the josn name of the verrazzano component in CRD
+func (h HelmComponent) GetJSONName() string {
+	return h.JSONName
+}
+
 // GetDependencies returns the Dependencies of this component
 func (h HelmComponent) GetDependencies() []string {
 	return h.Dependencies
@@ -130,6 +143,11 @@ func (h HelmComponent) GetDependencies() []string {
 // IsOperatorInstallSupported Returns true if the component supports direct install via the operator
 func (h HelmComponent) IsOperatorInstallSupported() bool {
 	return h.SupportsOperatorInstall
+}
+
+// GetCertificateNames returns the list of expected certificates used by this component
+func (h HelmComponent) GetCertificateNames(_ spi.ComponentContext) []types.NamespacedName {
+	return h.Certificates
 }
 
 // GetMinVerrazzanoVersion returns the minimum Verrazzano version required by this component
@@ -150,22 +168,47 @@ func (h HelmComponent) IsInstalled(context spi.ComponentContext) (bool, error) {
 	return installed, nil
 }
 
-// IsReady Indicates whether or not a component is available and ready
+// IsReady Indicates whether a component is available and ready
 func (h HelmComponent) IsReady(context spi.ComponentContext) bool {
 	if context.IsDryRun() {
 		context.Log().Debugf("IsReady() dry run for %s", h.ReleaseName)
 		return true
 	}
-	ns := h.resolveNamespace(context.EffectiveCR().Namespace)
-	if deployed, _ := helm.IsReleaseDeployed(h.ReleaseName, ns); deployed {
-		return true
+
+	// Does the Helm installed app_version number match the chart?
+	chartInfo, err := helmcli.GetChartInfo(h.ChartDir)
+	if err != nil {
+		return false
 	}
-	return false
+	releaseAppVersion, err := helmcli.GetReleaseAppVersion(h.ReleaseName, h.ChartNamespace)
+	if err != nil {
+		return false
+	}
+	if chartInfo.AppVersion != releaseAppVersion {
+		return false
+	}
+
+	ns := h.resolveNamespace(context.EffectiveCR().Namespace)
+	if deployed, _ := helm.IsReleaseDeployed(h.ReleaseName, ns); !deployed {
+		return false
+	}
+
+	return true
 }
 
-// IsEnabled Indicates whether or not a component is enabled for installation
-func (h HelmComponent) IsEnabled(context spi.ComponentContext) bool {
+// IsEnabled Indicates whether a component is enabled for installation
+func (h HelmComponent) IsEnabled(effectiveCR *vzapi.Verrazzano) bool {
 	return true
+}
+
+// ValidateInstall checks if the specified Verrazzano CR is valid for this component to be installed
+func (h HelmComponent) ValidateInstall(vz *vzapi.Verrazzano) error {
+	return nil
+}
+
+// ValidateUpdate checks if the specified new Verrazzano CR is valid for this component to be updated
+func (h HelmComponent) ValidateUpdate(old *vzapi.Verrazzano, new *vzapi.Verrazzano) error {
+	return nil
 }
 
 // Install installs the component using Helm
@@ -174,21 +217,9 @@ func (h HelmComponent) Install(context spi.ComponentContext) error {
 	// Resolve the namespace
 	resolvedNamespace := h.resolveNamespace(context.EffectiveCR().Namespace)
 
-	failed, err := helm.IsReleaseFailed(h.ReleaseName, resolvedNamespace)
-	if err != nil {
-		return err
-	}
-	if failed {
-		// Chart install failed, reset the chart to start over
-		// NOTE: we'll likely have to put in some more logic akin to what we do for the scripts, see
-		//       reset_chart() in the common.sh script.  Recovering chart state can be a bit difficult, we
-		//       may need to draw on both the 'ls' and 'status' output for that.
-		helm.Uninstall(context.Log(), h.ReleaseName, resolvedNamespace, context.IsDryRun())
-	}
-
 	var kvs []bom.KeyValue
 	// check for global image pull secret
-	kvs, err = secret.AddGlobalImagePullSecretHelmOverride(context.Log(), context.Client(), resolvedNamespace, kvs, h.ImagePullSecretKeyname)
+	kvs, err := secret.AddGlobalImagePullSecretHelmOverride(context.Log(), context.Client(), resolvedNamespace, kvs, h.ImagePullSecretKeyname)
 	if err != nil {
 		return err
 	}
@@ -227,6 +258,14 @@ func (h HelmComponent) PostInstall(context spi.ComponentContext) error {
 		return ctrlerrors.RetryableError{
 			Source:    h.ReleaseName,
 			Operation: "Check if Ingresses are present",
+		}
+	}
+
+	if readyStatus, certsNotReady := status.CertificatesAreReady(context.Client(), context.Log(), context.EffectiveCR(), h.Certificates); !readyStatus {
+		context.Log().Progressf("Certificates not ready for component %s: %v", h.ReleaseName, certsNotReady)
+		return ctrlerrors.RetryableError{
+			Source:    h.ReleaseName,
+			Operation: "Check if certificates are ready",
 		}
 	}
 
@@ -292,8 +331,10 @@ func (h HelmComponent) Upgrade(context spi.ComponentContext) error {
 		return context.Log().ErrorfNewErr("Failed to close temporary file: %v", err)
 	}
 
-	// Generate a list of component-specified override files if present
-	overrides.FileOverrides = append(overrides.FileOverrides, tmpFile.Name())
+	// Generate a list of override files making helm get values overrides first
+	overrides.FileOverrides = append(overrides.FileOverrides, "")
+	copy(overrides.FileOverrides[1:], overrides.FileOverrides[0:])
+	overrides.FileOverrides[0] = tmpFile.Name()
 
 	_, _, err = upgradeFunc(context.Log(), h.ReleaseName, namespace, h.ChartDir, true, context.IsDryRun(), overrides)
 	return err

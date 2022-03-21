@@ -5,11 +5,12 @@ package mchelidon
 
 import (
 	"fmt"
-	"github.com/verrazzano/verrazzano/pkg/test/framework"
-	"github.com/verrazzano/verrazzano/pkg/test/framework/metrics"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/verrazzano/verrazzano/pkg/test/framework"
+	"github.com/verrazzano/verrazzano/pkg/test/framework/metrics"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -35,6 +36,7 @@ var managedKubeconfig = os.Getenv("MANAGED_KUBECONFIG")
 
 // failed indicates whether any of the tests has failed
 var failed = false
+var beforeSuitePassed = false
 
 var t = framework.NewTestFramework("mchelidon")
 
@@ -59,6 +61,7 @@ var _ = t.BeforeSuite(func() {
 	Eventually(func() error {
 		return examples.DeployHelloHelidonApp(adminKubeconfig, sourceDir)
 	}, waitTimeout, pollingInterval).ShouldNot(HaveOccurred())
+	beforeSuitePassed = true
 	metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 })
 
@@ -77,7 +80,11 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 		// THEN expect that the app is not deployed to the admin cluster consistently for some length of time
 		t.It("Does not have application placed", func() {
 			Consistently(func() bool {
-				return examples.VerifyHelloHelidonInCluster(adminKubeconfig, true, false, testProjectName, testNamespace)
+				result, err := examples.VerifyHelloHelidonInCluster(adminKubeconfig, true, false, testProjectName, testNamespace)
+				if err != nil {
+					AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", testNamespace, err))
+				}
+				return result
 			}, consistentlyDuration, pollingInterval).Should(BeTrue())
 		})
 	})
@@ -96,7 +103,11 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 		// THEN expect that the app is deployed to the managed cluster
 		t.It("Has application placed", func() {
 			Eventually(func() bool {
-				return examples.VerifyHelloHelidonInCluster(managedKubeconfig, false, true, testProjectName, testNamespace)
+				result, err := examples.VerifyHelloHelidonInCluster(managedKubeconfig, false, true, testProjectName, testNamespace)
+				if err != nil {
+					AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", testNamespace, err))
+				}
+				return result
 			}, waitTimeout, pollingInterval).Should(BeTrue())
 		})
 	})
@@ -123,7 +134,11 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 			})
 			t.It("Does not have application placed", func() {
 				Eventually(func() bool {
-					return examples.VerifyHelloHelidonInCluster(kubeconfig, false, false, testProjectName, testNamespace)
+					result, err := examples.VerifyHelloHelidonInCluster(kubeconfig, false, false, testProjectName, testNamespace)
+					if err != nil {
+						AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", testNamespace, err))
+					}
+					return result
 				}, waitTimeout, pollingInterval).Should(BeTrue())
 			})
 		}
@@ -161,7 +176,7 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 	t.Context("for Prometheus Metrics", Label("f:observability.monitoring.prom"), func() {
 
 		t.It("Verify base_jvm_uptime_seconds metrics exist for managed cluster", func() {
-			clusterNameMetricsLabel, _ := pkg.GetClusterNameMetricLabel()
+			clusterNameMetricsLabel, _ := pkg.GetClusterNameMetricLabel(adminKubeconfig)
 			Eventually(func() bool {
 				m := make(map[string]string)
 				m["app"] = testApp
@@ -171,7 +186,7 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 		})
 
 		t.It("Verify DNE base_jvm_uptime_seconds metrics does not exist for managed cluster", func() {
-			clusterNameMetricsLabel, _ := pkg.GetClusterNameMetricLabel()
+			clusterNameMetricsLabel, _ := pkg.GetClusterNameMetricLabel(adminKubeconfig)
 			Eventually(func() bool {
 				m := make(map[string]string)
 				m["cluster"] = testNamespace
@@ -181,7 +196,7 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 		})
 
 		t.It("Verify vendor_requests_count_total metrics exist for managed cluster", func() {
-			clusterNameMetricsLabel, _ := pkg.GetClusterNameMetricLabel()
+			clusterNameMetricsLabel, _ := pkg.GetClusterNameMetricLabel(adminKubeconfig)
 			Eventually(func() bool {
 				m := make(map[string]string)
 				m["app"] = testApp
@@ -191,7 +206,7 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 		})
 
 		t.It("Verify container_cpu_cfs_periods_total metrics exist for managed cluster", func() {
-			clusterNameMetricsLabel, _ := pkg.GetClusterNameMetricLabel()
+			clusterNameMetricsLabel, _ := pkg.GetClusterNameMetricLabel(adminKubeconfig)
 			Eventually(func() bool {
 				m := make(map[string]string)
 				m["namespace"] = testNamespace
@@ -218,14 +233,22 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 		t.It("App should be removed from managed cluster", func() {
 			Eventually(func() bool {
 				// app should not be placed in the managed cluster
-				return examples.VerifyHelloHelidonInCluster(managedKubeconfig, false, false, testProjectName, testNamespace)
+				result, err := examples.VerifyHelloHelidonInCluster(managedKubeconfig, false, false, testProjectName, testNamespace)
+				if err != nil {
+					AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", testNamespace, err))
+				}
+				return result
 			}, waitTimeout, pollingInterval).Should(BeTrue())
 		})
 
 		It("App should be placed in admin cluster", func() {
 			Eventually(func() bool {
 				// app should be placed in the admin cluster
-				return examples.VerifyHelloHelidonInCluster(adminKubeconfig, true, true, testProjectName, testProjectName)
+				result, err := examples.VerifyHelloHelidonInCluster(adminKubeconfig, true, true, testProjectName, testProjectName)
+				if err != nil {
+					AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", testNamespace, err))
+				}
+				return result
 			}, waitTimeout, pollingInterval).Should(BeTrue())
 		})
 	})
@@ -246,7 +269,11 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 		// THEN expect that the app is not deployed to the admin cluster
 		t.It("Admin cluster does not have application placed", func() {
 			Eventually(func() bool {
-				return examples.VerifyHelloHelidonInCluster(adminKubeconfig, true, false, testProjectName, testNamespace)
+				result, err := examples.VerifyHelloHelidonInCluster(adminKubeconfig, true, false, testProjectName, testNamespace)
+				if err != nil {
+					AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", testNamespace, err))
+				}
+				return result
 			}, waitTimeout, pollingInterval).Should(BeTrue())
 		})
 
@@ -255,7 +282,11 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 		// THEN expect that the app is now deployed to the cluster
 		t.It("Managed cluster again has application placed", func() {
 			Eventually(func() bool {
-				return examples.VerifyHelloHelidonInCluster(managedKubeconfig, false, true, testProjectName, testNamespace)
+				result, err := examples.VerifyHelloHelidonInCluster(managedKubeconfig, false, true, testProjectName, testNamespace)
+				if err != nil {
+					AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", testNamespace, err))
+				}
+				return result
 			}, waitTimeout, pollingInterval).Should(BeTrue())
 		})
 	})
@@ -294,7 +325,7 @@ var _ = t.Describe("In Multi-cluster, verify hello-helidon", Label("f:multiclust
 })
 
 var _ = t.AfterSuite(func() {
-	if failed {
+	if failed || !beforeSuitePassed {
 		pkg.ExecuteClusterDumpWithEnvVarConfig()
 	}
 })

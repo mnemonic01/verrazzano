@@ -37,13 +37,17 @@ var t = framework.NewTestFramework("kiali")
 var _ = t.BeforeSuite(func() {
 	client, kialiErr = k8sutil.GetKubernetesClientset()
 	Expect(kialiErr).ToNot(HaveOccurred())
-	httpClient, kialiErr = pkg.GetSystemVmiHTTPClient()
+	httpClient, kialiErr = pkg.GetVerrazzanoRetryableHTTPClient()
 	Expect(kialiErr).ToNot(HaveOccurred())
 })
 
 // 'It' Wrapper to only run spec if Kiali is supported on the current Verrazzano installation
 func WhenKialiInstalledIt(description string, f interface{}) {
-	supported, err := pkg.IsVerrazzanoMinVersion("1.1.0")
+	kubeconfigPath, err := k8sutil.GetKubeConfigLocation()
+	if err != nil {
+		Fail(fmt.Sprintf("Failed to get default kubeconfig path: %s", err.Error()))
+	}
+	supported, err := pkg.IsVerrazzanoMinVersion("1.1.0", kubeconfigPath)
 	if err != nil {
 		Fail(err.Error())
 	}
@@ -72,7 +76,11 @@ var _ = t.Describe("Kiali", Label("f:platform-lcm.install"), func() {
 
 		WhenKialiInstalledIt("should have a running pod", func() {
 			kialiPodsRunning := func() bool {
-				return pkg.PodsRunning(systemNamespace, []string{kiali})
+				result, err := pkg.PodsRunning(systemNamespace, []string{kiali})
+				if err != nil {
+					AbortSuite(fmt.Sprintf("Pod %v is not running in the namespace: %v, error: %v", kiali, systemNamespace, err))
+				}
+				return result
 			}
 			Eventually(kialiPodsRunning, waitTimeout, pollingInterval).Should(BeTrue())
 		})
@@ -103,7 +111,7 @@ var _ = t.Describe("Kiali", Label("f:platform-lcm.install"), func() {
 
 			WhenKialiInstalledIt("not allow unauthenticated logins", func() {
 				Eventually(func() bool {
-					unauthHTTPClient, err := pkg.GetSystemVmiHTTPClient()
+					unauthHTTPClient, err := pkg.GetVerrazzanoRetryableHTTPClient()
 					if err != nil {
 						return false
 					}

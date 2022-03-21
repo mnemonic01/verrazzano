@@ -46,16 +46,19 @@ var _ = t.BeforeSuite(func() {
 	deployFooApplication()
 	deployBarApplication()
 	deployNoIstioApplication()
+	beforeSuitePassed = true
 	metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 })
 
 var failed = false
+var beforeSuitePassed = false
+
 var _ = t.AfterEach(func() {
 	failed = failed || framework.VzCurrentGinkgoTestDescription().Failed()
 })
 
 var _ = t.AfterSuite(func() {
-	if failed {
+	if failed || !beforeSuitePassed {
 		pkg.ExecuteClusterDumpWithEnvVarConfig()
 	}
 	start := time.Now()
@@ -269,7 +272,7 @@ var _ = t.Describe("AuthPolicy test,", Label("f:security.authpol",
 	t.Context("check app deployment", func() {
 		t.It("in foo namespace", func() {
 			Eventually(func() bool {
-				return pkg.PodsRunning(fooNamespace, expectedPodsFoo)
+				return checkPodsRunning(fooNamespace, expectedPodsFoo)
 			}, waitTimeout, pollingInterval).Should(BeTrue(), fmt.Sprintf("Auth Policy Application failed to start in %s", fooNamespace))
 		})
 	})
@@ -277,7 +280,7 @@ var _ = t.Describe("AuthPolicy test,", Label("f:security.authpol",
 	t.Context("check app deployment", func() {
 		t.It("in bar namespace", func() {
 			Eventually(func() bool {
-				return pkg.PodsRunning(barNamespace, expectedPodsBar)
+				return checkPodsRunning(barNamespace, expectedPodsBar)
 			}, waitTimeout, pollingInterval).Should(BeTrue(), fmt.Sprintf("Auth Policy Application failed to start in %s", barNamespace))
 		})
 	})
@@ -285,7 +288,7 @@ var _ = t.Describe("AuthPolicy test,", Label("f:security.authpol",
 	t.Context("check app deployment", func() {
 		t.It("in noistio namespace", func() {
 			Eventually(func() bool {
-				return pkg.PodsRunning(noIstioNamespace, expectedPodsBar)
+				return checkPodsRunning(noIstioNamespace, expectedPodsBar)
 			}, waitTimeout, pollingInterval).Should(BeTrue(), fmt.Sprintf("Auth Policy Application failed to start in %s", noIstioNamespace))
 		})
 	})
@@ -462,7 +465,7 @@ var _ = t.Describe("Verify Auth Policy Prometheus Scrape Targets", func() {
 	t.Context("Deployment.", func() {
 		t.It("and waiting for expected pods must be running", func() {
 			Eventually(func() bool {
-				return pkg.PodsRunning(fooNamespace, expectedPodsFoo)
+				return checkPodsRunning(fooNamespace, expectedPodsFoo)
 			}, waitTimeout, pollingInterval).Should(BeTrue(), fmt.Sprintf("Auth Policy Application failed to start in %s", fooNamespace))
 		})
 	})
@@ -470,7 +473,7 @@ var _ = t.Describe("Verify Auth Policy Prometheus Scrape Targets", func() {
 	t.Context("Deployment.", func() {
 		t.It("and waiting for expected pods must be running", func() {
 			Eventually(func() bool {
-				return pkg.PodsRunning(barNamespace, expectedPodsBar)
+				return checkPodsRunning(barNamespace, expectedPodsBar)
 			}, waitTimeout, pollingInterval).Should(BeTrue(), fmt.Sprintf("Auth Policy Application failed to start in %s", barNamespace))
 		})
 	})
@@ -478,7 +481,7 @@ var _ = t.Describe("Verify Auth Policy Prometheus Scrape Targets", func() {
 	t.Context("Deployment.", func() {
 		t.It("and waiting for expected pods must be running", func() {
 			Eventually(func() bool {
-				return pkg.PodsRunning(noIstioNamespace, expectedPodsBar)
+				return checkPodsRunning(noIstioNamespace, expectedPodsBar)
 			}, waitTimeout, pollingInterval).Should(BeTrue(), fmt.Sprintf("Auth Policy Application failed to start in %s", noIstioNamespace))
 		})
 	})
@@ -598,3 +601,12 @@ var _ = t.Describe("Verify Auth Policy Prometheus Scrape Targets", func() {
 	})
 
 })
+
+// checkPodsRunning checks whether the pods are ready in a given namespace
+func checkPodsRunning(namespace string, expectedPods []string) bool {
+	result, err := pkg.PodsRunning(namespace, expectedPods)
+	if err != nil {
+		AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", namespace, err))
+	}
+	return result
+}

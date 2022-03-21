@@ -18,15 +18,26 @@ import (
 )
 
 const (
-	shortWaitTimeout     = 10 * time.Minute
-	shortPollingInterval = 10 * time.Second
-	longWaitTimeout      = 20 * time.Minute
-	longPollingInterval  = 20 * time.Second
+	shortWaitTimeout         = 10 * time.Minute
+	shortPollingInterval     = 10 * time.Second
+	longWaitTimeout          = 20 * time.Minute
+	longPollingInterval      = 20 * time.Second
+	imagePullWaitTimeout     = 40 * time.Minute
+	imagePullPollingInterval = 30 * time.Second
 )
 
 var (
 	t                  = framework.NewTestFramework("bobsbooks")
 	generatedNamespace = pkg.GenerateNamespace("bobs-books")
+	expectedPods       = []string{
+		"bobbys-front-end-adminserver",
+		"bobs-bookstore-adminserver",
+		"bobbys-coherence-0",
+		"roberts-coherence-0",
+		"roberts-coherence-1",
+		"bobbys-helidon-stock-application",
+		"robert-helidon",
+		"mysql"}
 )
 
 var _ = BeforeSuite(func() {
@@ -35,30 +46,29 @@ var _ = BeforeSuite(func() {
 		deployBobsBooksExample(namespace)
 		metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 	}
-
+	pkg.Log(pkg.Info, "Container image pull check")
+	Eventually(func() bool {
+		return pkg.ContainerImagePullWait(namespace, expectedPods)
+	}, imagePullWaitTimeout, imagePullPollingInterval).Should(BeTrue())
 	pkg.Log(pkg.Info, "Bobs Books Application expected pods running check.")
 	Eventually(func() bool {
-		expectedPods := []string{
-			"bobbys-front-end-adminserver",
-			"bobs-bookstore-adminserver",
-			"bobbys-coherence-0",
-			"roberts-coherence-0",
-			"roberts-coherence-1",
-			"bobbys-helidon-stock-application",
-			"robert-helidon",
-			"mysql",
+		result, err := pkg.PodsRunning(namespace, expectedPods)
+		if err != nil {
+			AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", namespace, err))
 		}
-		return pkg.PodsRunning(namespace, expectedPods)
+		return result
 	}, longWaitTimeout, longPollingInterval).Should(BeTrue(), "Bobs Books Application Failed to Deploy")
+	beforeSuitePassed = true
 })
 
 var failed = false
+var beforeSuitePassed = false
 var _ = t.AfterEach(func() {
 	failed = failed || CurrentSpecReport().Failed()
 })
 
 var _ = t.AfterSuite(func() {
-	if failed {
+	if failed || !beforeSuitePassed {
 		// bobbys frontend
 		pkg.DumpContainerLogs(namespace, "bobbys-front-end-adminserver", "weblogic-server", "/scratch/logs/bobbys-front-end")
 		pkg.DumpContainerLogs(namespace, "bobbys-front-end-managed-server1", "weblogic-server", "/scratch/logs/bobbys-front-end")
@@ -137,15 +147,28 @@ func undeployBobsBooksExample() {
 		return pkg.DeleteResourceFromFileInGeneratedNamespace("examples/bobs-books/bobs-books-comp.yaml", namespace)
 	}, shortWaitTimeout, shortPollingInterval).ShouldNot(HaveOccurred())
 
+	pkg.Log(pkg.Info, "Wait for pods to terminate")
+	Eventually(func() bool {
+		podsTerminated, _ := pkg.PodsNotRunning(namespace, expectedPods)
+		return podsTerminated
+	}, shortWaitTimeout, shortPollingInterval).Should(BeTrue())
+
 	pkg.Log(pkg.Info, "Delete namespace")
 	Eventually(func() error {
 		return pkg.DeleteNamespace(namespace)
 	}, shortWaitTimeout, shortPollingInterval).ShouldNot(HaveOccurred())
 
+	pkg.Log(pkg.Info, "Wait for namespace finalizer to be removed")
+	Eventually(func() bool {
+		return pkg.CheckNamespaceFinalizerRemoved(namespace)
+	}, shortWaitTimeout, shortPollingInterval).Should(BeTrue())
+
+	pkg.Log(pkg.Info, "Wait for namespace deletion")
 	Eventually(func() bool {
 		_, err := pkg.GetNamespace(namespace)
 		return err != nil && errors.IsNotFound(err)
 	}, shortWaitTimeout, shortPollingInterval).Should(BeTrue())
+
 	metrics.Emit(t.Metrics.With("undeployment_elapsed_time", time.Since(start).Milliseconds()))
 }
 
@@ -459,16 +482,6 @@ var _ = t.Describe("Bobs Books test", Label("f:app-lcm.oam",
 				})
 			},
 		)
-		// GIVEN a WebLogic application with logging enabled
-		// WHEN the log records are retrieved from the Elasticsearch index
-		// THEN verify that no 'pattern not matched' log record of fluentd-stdout-sidecar is found
-		t.It("Verify recent 'pattern not matched' log records do not exist", func() {
-			Expect(pkg.NoLog(bobsIndexName,
-				[]pkg.Match{
-					{Key: "kubernetes.container_name.keyword", Value: "fluentd-stdout-sidecar"},
-					{Key: "message", Value: "pattern not matched"}},
-				[]pkg.Match{})).To(BeTrue())
-		})
 		pkg.Concurrently(
 			// GIVEN a WebLogic application with logging enabled
 			// WHEN the log records are retrieved from the Elasticsearch index

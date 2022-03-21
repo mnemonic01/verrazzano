@@ -126,6 +126,13 @@ spec:
       ports:
         - port: 9090
           protocol: TCP
+    - from:
+        - podSelector:
+            matchLabels:
+              app: vmi-system-kiali
+      ports:
+        - port: 9090
+          protocol: TCP
 {{- end }}
 ---
 # Network policy for Cert Manager
@@ -556,6 +563,20 @@ spec:
   policyTypes:
     - Ingress
   ingress:
+    - ports:
+        - port: 15012
+          protocol: TCP
+      from:
+        - namespaceSelector:
+            matchLabels:
+              verrazzano-managed: "true"
+              istio-injection: enabled
+        - namespaceSelector:
+            matchLabels:
+              verrazzano.io/namespace: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              k8s-app: verrazzano-monitoring-operator
     - ports:
         - port: 15012
           protocol: TCP

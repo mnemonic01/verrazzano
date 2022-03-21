@@ -23,6 +23,13 @@ pipeline {
         }
     }
 
+    parameters {
+        choice (name: 'LRE_CLUSTER',
+                description: 'Which LRE cluster to run the test against',
+                // 1st choice is the default value
+                choices: [ "dev", "prod", "test" ])
+    }
+
     environment {
         TEST_ENV = "LRE"
         DOCKER_CREDS = credentials('github-packages-credentials-rw')
@@ -35,9 +42,17 @@ pipeline {
         IMAGE_PULL_SECRET = 'verrazzano-container-registry'
         GOPATH = '/home/opc/go'
         GO_REPO_PATH = "${GOPATH}/src/github.com/verrazzano"
+        LRE_CLUSTER_ENV = "${params.LRE_CLUSTER}"
         dev_lre_compartment_id = credentials('dev-lre-compartment-id')
         dev2_lre_compartment_id = credentials('dev2-lre-compartment-id')
         dev2_lre_cluster_id = credentials('dev2-lre-cluster-id')
+        prod_lre_compartment_id = credentials('prod-lre-compartment-id')
+        prod_lre_cluster_id = credentials('prod-lre-cluster-id')
+        test_lre_compartment_id = credentials('test-lre-compartment-id')
+        test_lre_cluster_id = credentials('test-lre-cluster-id')
+        dev2_private_ip = credentials('dev2-lre-cluster-ip')
+        prod_private_ip = credentials('prod-lre-cluster-ip')
+        test_private_ip = credentials('test-lre-cluster-ip')
         dev_lre_bastion_ip = credentials('dev-lre-bastion-ip')
         OCI_CLI_REGION = "us-ashburn-1"
         KUBECONFIG = "${WORKSPACE}/.kube/config"
@@ -134,37 +149,31 @@ pipeline {
         stage('Download kubeconfig') {
             steps {
                 script {
+                    switch(LRE_CLUSTER_ENV) {
+                        case "dev":
+                            env.CLUSTER_ID = "${dev2_lre_cluster_id}"
+                            break
+                        case "prod":
+                            env.CLUSTER_ID = "${prod_lre_cluster_id}"
+                            break
+                        case "test":
+                            env.CLUSTER_ID = "${test_lre_cluster_id}"
+                            break
+                        default:
+                            env.CLUSTER_ID = "${dev2_lre_cluster_id}"
+                            break
+                    }
                     sh """
                         mkdir -p ${WORKSPACE}/.kube
                         rm -rf ${KUBECONFIG}
                         # get kubeconfig from OCI
                         oci ce cluster create-kubeconfig \
-                        --cluster-id ${dev2_lre_cluster_id} \
+                        --cluster-id ${CLUSTER_ID} \
                         --file ${KUBECONFIG} \
                         --region ${OCI_CLI_REGION} \
                         --token-version 2.0.0  \
                         --kube-endpoint PRIVATE_ENDPOINT
-                    """
-                }
-            }
-        }
-
-        stage('call ssh-keygen to create public and private keys') {
-            steps {
-                script {
-                    sh """
-                        #remove old key
-                        #ssh-keygen -R ${dev_lre_bastion_ip}
-                        # delete the key file if it exists
-                        rm -f ${WORKSPACE}/.ssh/id_rsa*
-                        mkdir -p ${WORKSPACE}/.ssh
-                        # call ssh-keygen to create the keys
-                        ssh-keygen -m PEM -N '' -f ${WORKSPACE}/.ssh/id_rsa
-                        # export the ssh public key value for LRE cluster
-                        export ssh_public_key_path=${WORKSPACE}/.ssh/id_rsa.pub
-                        # export the ssh private key file for LRE cluster
-                        export ssh_private_key_path=${WORKSPACE}/.ssh/id_rsa
-                        ls -ls ${WORKSPACE}/.ssh
+                        cat ${KUBECONFIG}
                     """
                 }
             }
@@ -173,24 +182,63 @@ pipeline {
         stage('set up ssh tunnel') {
             steps {
                 script {
-                    sh '''
-                        echo "create ssh tunnel"
-                        cd ${GO_REPO_PATH}/verrazzano/
-                        ci/scripts/lre_setup_ssh_tunnel.sh
-                        #wait a bit for the tunnel to be setup
-                        sleep 60
-                        ls -ls ${KUBECONFIG}
-                        sed -i 's|server:.*|server: https://127.0.0.1:6443|g' $KUBECONFIG
-                        cat ${KUBECONFIG}
-                        # updating kubeconfig with sa
-                        cd ${GO_REPO_PATH}/verrazzano/
-                        ci/scripts/update_lre_kubeconfig.sh
+                    switch(LRE_CLUSTER_ENV) {
+                        case "dev" :
+                            //dev2 lre cluster use bastion host from lre/dev compartment
+                            env.COMPARTMENT_ID = "${dev_lre_compartment_id}"
+                            env.CLUSTER_IP = "${dev2_private_ip}"
+                            env.SESSION_NAME = "lre-dev2-pf-session"
+                            break
+                        case "prod" :
+                            env.COMPARTMENT_ID = "${prod_lre_compartment_id}"
+                            env.CLUSTER_IP = "${prod_private_ip}"
+                            env.SESSION_NAME = "lre-prod-pf-session"
+                            break
+                        case "test" :
+                            //test lre cluster use bastion host from lre/dev compartment
+                            env.COMPARTMENT_ID = "${dev_lre_compartment_id}"
+                            env.CLUSTER_IP = "${test_private_ip}"
+                            env.SESSION_NAME = "lre-test-pf-session"
+                            break
+                        default:
+                            //dev2 lre cluster use bastion host from lre/dev compartment
+                            env.COMPARTMENT_ID = "${dev_lre_compartment_id}"
+                            env.CLUSTER_IP = "${dev2_private_ip}"
+                            env.SESSION_NAME = "lre-dev2-pf-session"
+                            break
+                    }
+                    withCredentials([sshUserPrivateKey(credentialsId: '5fcc03de-31ce-4566-b11f-9de38e5d98fd', keyFileVariable: 'OPC_USER_KEY_FILE', passphraseVariable: 'OPC_USER_PASSPHRASE', usernameVariable: 'OPC_USERNAME')]) {
+                        sh '''
+                            rm -f ${WORKSPACE}/.ssh/id_rsa*
+                            mkdir -p ${WORKSPACE}/.ssh
+                            # get the ssh public key
+                            ssh-keygen -y -e -f ${OPC_USER_KEY_FILE} > /tmp/opc_ssh2.pub
+                            # convert SSH2 public key into an OpenSSH format
+                            ssh-keygen -i -f /tmp/opc_ssh2.pub > ${WORKSPACE}/.ssh/id_rsa.pub
+                            # export the ssh public key value for LRE cluster
+                            export ssh_public_key_path=${WORKSPACE}/.ssh/id_rsa.pub
+                            ls -ls ${WORKSPACE}/.ssh
+                            echo "cat the private key file"
+                            cat ${OPC_USER_KEY_FILE}
 
-                        echo "run kubectl get nodes"
-                        kubectl get nodes
-                        echo "run kubectl get pods"
-                        kubectl get pods
-                    '''
+                            echo "create ssh tunnel"
+                            cd ${GO_REPO_PATH}/verrazzano/
+                            ci/scripts/lre_setup_ssh_tunnel.sh
+                            #wait a bit for the tunnel to be setup
+                            sleep 60
+                            ls -ls ${KUBECONFIG}
+                            sed -i 's|server:.*|server: https://127.0.0.1:6443|g' $KUBECONFIG
+                            cat ${KUBECONFIG}
+                            # updating kubeconfig with sa
+                            cd ${GO_REPO_PATH}/verrazzano/
+                            ci/scripts/update_lre_kubeconfig.sh
+
+                            echo "run kubectl get nodes"
+                            kubectl get nodes
+                            echo "run kubectl get pods"
+                            kubectl get pods
+                        '''
+                    }
                 }
             }
         }
@@ -282,7 +330,26 @@ pipeline {
                         runGinkgo('metrics/deploymetrics')
                     }
                 }
-
+                stage('poko metricsbinding') {
+                    steps {
+                        runGinkgo('metricsbinding')
+                    }
+                }
+                stage('logging trait helodin workload') {
+                    steps {
+                        runGinkgo('loggingtrait/helidonworkload')
+                    }
+                }
+                stage('logging trait weblogic workload') {
+                    steps {
+                        runGinkgo('loggingtrait/weblogicworkload')
+                    }
+                }
+                stage('logging trait coherence workload') {
+                    steps {
+                        runGinkgo('loggingtrait/coherenceworkload')
+                    }
+                }
             }
             post {
                 always {

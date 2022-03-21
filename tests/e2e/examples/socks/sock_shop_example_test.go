@@ -26,12 +26,14 @@ import (
 )
 
 const (
-	shortWaitTimeout     = 7 * time.Minute
-	shortPollingInterval = 10 * time.Second
-	waitTimeout          = 10 * time.Minute
-	longWaitTimeout      = 20 * time.Minute
-	pollingInterval      = 30 * time.Second
-	sockshopAppName      = "sockshop-appconfig"
+	shortWaitTimeout         = 7 * time.Minute
+	shortPollingInterval     = 10 * time.Second
+	waitTimeout              = 10 * time.Minute
+	longWaitTimeout          = 20 * time.Minute
+	pollingInterval          = 30 * time.Second
+	sockshopAppName          = "sockshop-appconfig"
+	imagePullWaitTimeout     = 40 * time.Minute
+	imagePullPollingInterval = 30 * time.Second
 )
 
 var sockShop SockShop
@@ -40,10 +42,11 @@ var username, password string
 var (
 	t                  = framework.NewTestFramework("socks")
 	generatedNamespace = pkg.GenerateNamespace("sockshop")
+	clusterDump        = pkg.NewClusterDumpWrapper()
 )
 
 // creates the sockshop namespace and applies the components and application yaml
-var _ = t.BeforeSuite(func() {
+var _ = clusterDump.BeforeSuite(func() {
 	username = "username" + strconv.FormatInt(time.Now().Unix(), 10)
 	password = b64.StdEncoding.EncodeToString([]byte(time.Now().String()))
 	sockShop = NewSockShop(username, password, pkg.Ingress())
@@ -68,6 +71,9 @@ var _ = t.BeforeSuite(func() {
 		metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 	}
 
+	Eventually(func() bool {
+		return pkg.ContainerImagePullWait(namespace, expectedPods)
+	}, imagePullWaitTimeout, imagePullPollingInterval).Should(BeTrue())
 	// checks that all pods are up and running
 	Eventually(sockshopPodsRunning, longWaitTimeout, pollingInterval).Should(BeTrue())
 })
@@ -240,29 +246,39 @@ var _ = t.Describe("Sock Shop test", Label("f:app-lcm.oam",
 		}, shortWaitTimeout, shortPollingInterval).Should(And(pkg.HasStatus(http.StatusOK), pkg.BodyContains("For all those leg lovers out there.")))
 	})
 
-	// this is marked pending until VZ-3760 is fixed
-	PDescribe("Verify Prometheus scraped metrics", func() {
-		t.It("Retrieve Prometheus scraped metrics", func() {
-			pkg.Concurrently(
-				func() {
-					Eventually(appMetricExists, waitTimeout, pollingInterval).Should(BeTrue())
-				},
-				func() {
+	// Verify Prometheus scraped metrics
+	t.Context("Metrics", Label("f:observability.monitoring.prom"), func() {
+		kubeconfigPath, err := k8sutil.GetKubeConfigLocation()
+		if err != nil {
+			Expect(err).To(BeNil(), fmt.Sprintf("Failed to get default kubeconfig path: %s", err.Error()))
+		}
+		// Coherence metric fix available only from 1.3.0
+		if ok, _ := pkg.IsVerrazzanoMinVersion("1.3.0", kubeconfigPath); ok {
+			t.It("Retrieve Prometheus scraped metrics", func() {
+				if getVariant() == "helidon" {
+					pkg.Concurrently(
+						func() {
+							Eventually(appMetricExists, waitTimeout, pollingInterval).Should(BeTrue())
+						},
+						func() {
+							Eventually(coherenceMetricExists, waitTimeout, pollingInterval).Should(BeTrue())
+						},
+						func() {
+							Eventually(appComponentMetricExists, waitTimeout, pollingInterval).Should(BeTrue())
+						},
+						func() {
+							Eventually(appConfigMetricExists, waitTimeout, pollingInterval).Should(BeTrue())
+						},
+					)
+				} else {
 					Eventually(coherenceMetricExists, waitTimeout, pollingInterval).Should(BeTrue())
-				},
-				func() {
-					Eventually(appComponentMetricExists, waitTimeout, pollingInterval).Should(BeTrue())
-				},
-				func() {
-					Eventually(appConfigMetricExists, waitTimeout, pollingInterval).Should(BeTrue())
-				},
-			)
-		})
+				}
+			})
+		}
 	})
 
 })
 
-var clusterDump = pkg.NewClusterDumpWrapper()
 var _ = clusterDump.AfterEach(func() {})
 
 // undeploys the application, components, and namespace
@@ -299,6 +315,11 @@ var _ = clusterDump.AfterSuite(func() {
 			return pkg.DeleteNamespace(namespace)
 		}, shortWaitTimeout, shortPollingInterval).ShouldNot(HaveOccurred())
 
+		pkg.Log(pkg.Info, "Wait for namespace finalizer to be removed")
+		Eventually(func() bool {
+			return pkg.CheckNamespaceFinalizerRemoved(namespace)
+		}, shortWaitTimeout, shortPollingInterval).Should(BeTrue())
+
 		pkg.Log(pkg.Info, "Wait for sockshop namespace to be deleted")
 		Eventually(func() bool {
 			_, err := pkg.GetNamespace(namespace)
@@ -334,12 +355,16 @@ func isSockShopServiceReady(name string) bool {
 
 // sockshopPodsRunning checks whether the application pods are ready
 func sockshopPodsRunning() bool {
-	return pkg.PodsRunning(namespace, expectedPods)
+	result, err := pkg.PodsRunning(namespace, expectedPods)
+	if err != nil {
+		AbortSuite(fmt.Sprintf("One or more pods are not running in the namespace: %v, error: %v", namespace, err))
+	}
+	return result
 }
 
 // appMetricExists checks whether app related metrics are available
 func appMetricExists() bool {
-	return pkg.MetricsExist("base_jvm_uptime_seconds", "cluster", "SockShop")
+	return pkg.MetricsExist("base_jvm_uptime_seconds", "app", "carts-coh")
 }
 
 func coherenceMetricExists() bool {

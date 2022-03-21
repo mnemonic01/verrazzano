@@ -80,13 +80,26 @@ func (t *TestFramework) It(text string, args ...interface{}) bool {
 		ginkgo.Fail("Unsupported body type - expected function")
 	}
 	f := func() {
-		metrics.Emit(t.Metrics.With(metrics.Status, metrics.Started)) // Starting point metric
+		metrics.Emit(t.Metrics) // Starting point metric
 		reflect.ValueOf(body).Call([]reflect.Value{})
 	}
 
 	args[len(args)-1] = ginkgo.Offset(1)
 	args = append(args, f)
 	return ginkgo.It(text, args...)
+}
+
+func (t *TestFramework) ItMinimumVersion(text string, version string, kubeconfigPath string, args ...interface{}) bool {
+	supported, err := pkg.IsVerrazzanoMinVersion(version, kubeconfigPath)
+	if err != nil {
+		pkg.Log(pkg.Error, fmt.Sprintf("Error getting Verrazzano version: %v", err))
+		return false
+	}
+	if !supported {
+		pkg.Log(pkg.Info, fmt.Sprintf("Skipping test because Verrazzano version is less than %s", version))
+		return true
+	}
+	return t.It(text, args...)
 }
 
 // Describe wraps Ginkgo Describe to emit a metric
@@ -99,7 +112,7 @@ func (t *TestFramework) Describe(text string, args ...interface{}) bool {
 		ginkgo.Fail("Unsupported body type - expected function")
 	}
 	f := func() {
-		metrics.Emit(t.Metrics.With(metrics.Status, metrics.Started))
+		metrics.Emit(t.Metrics)
 		reflect.ValueOf(body).Call([]reflect.Value{})
 		metrics.Emit(t.Metrics.With(metrics.Duration, metrics.DurationMillis()))
 	}
@@ -119,7 +132,7 @@ func (t *TestFramework) DescribeTable(text string, args ...interface{}) bool {
 	}
 	funcType := reflect.TypeOf(body)
 	f := reflect.MakeFunc(funcType, func(args []reflect.Value) (results []reflect.Value) {
-		metrics.Emit(t.Metrics.With(metrics.Status, metrics.Started))
+		metrics.Emit(t.Metrics)
 		rv := reflect.ValueOf(body).Call(args)
 		metrics.Emit(t.Metrics.With(metrics.Duration, metrics.DurationMillis()))
 		return rv
@@ -135,7 +148,7 @@ func (t *TestFramework) BeforeSuite(body func()) bool {
 	}
 
 	f := func() {
-		metrics.Emit(t.Metrics.With(metrics.Status, metrics.Started))
+		metrics.Emit(t.Metrics)
 		reflect.ValueOf(body).Call([]reflect.Value{})
 	}
 	return ginkgo.BeforeSuite(f)
@@ -198,12 +211,12 @@ func (t *TestFramework) JustAfterEach(args ...interface{}) bool {
 	return ginkgo.JustAfterEach(args...)
 }
 
-//BeforeAll - wrapper function for Ginkgo BeforeAll
+// BeforeAll - wrapper function for Ginkgo BeforeAll
 func (t *TestFramework) BeforeAll(args ...interface{}) bool {
 	return ginkgo.BeforeAll(args...)
 }
 
-//AfterAll - wrapper function for Ginkgo AfterAll
+// AfterAll - wrapper function for Ginkgo AfterAll
 func (t *TestFramework) AfterAll(args ...interface{}) bool {
 	return ginkgo.AfterAll(args...)
 }

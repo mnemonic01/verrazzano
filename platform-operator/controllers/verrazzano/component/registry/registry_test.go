@@ -87,18 +87,41 @@ func TestComponentDependenciesMet(t *testing.T) {
 		ChartNamespace: "bar",
 		Dependencies:   []string{istio.ComponentName},
 	}
-	client := fake.NewFakeClientWithScheme(k8scheme.Scheme, &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "istio-system",
-			Name:      "istiod",
+	client := fake.NewFakeClientWithScheme(k8scheme.Scheme,
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "istio-system",
+				Name:      "istiod",
+			},
+			Status: appsv1.DeploymentStatus{
+				AvailableReplicas: 1,
+				Replicas:          1,
+				UpdatedReplicas:   1,
+			},
 		},
-		Status: appsv1.DeploymentStatus{
-			Replicas:            1,
-			ReadyReplicas:       1,
-			AvailableReplicas:   1,
-			UnavailableReplicas: 0,
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "istio-system",
+				Name:      "istio-ingressgateway",
+			},
+			Status: appsv1.DeploymentStatus{
+				AvailableReplicas: 1,
+				Replicas:          1,
+				UpdatedReplicas:   1,
+			},
 		},
-	})
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "istio-system",
+				Name:      "istio-egressgateway",
+			},
+			Status: appsv1.DeploymentStatus{
+				AvailableReplicas: 1,
+				Replicas:          1,
+				UpdatedReplicas:   1,
+			},
+		},
+	)
 	helm.SetChartStatusFunction(func(releaseName string, namespace string) (string, error) {
 		return helm.ChartStatusDeployed, nil
 	})
@@ -124,10 +147,9 @@ func TestComponentDependenciesNotMet(t *testing.T) {
 			Name:      "istiod",
 		},
 		Status: appsv1.DeploymentStatus{
-			Replicas:            1,
-			ReadyReplicas:       0,
-			AvailableReplicas:   0,
-			UnavailableReplicas: 1,
+			AvailableReplicas: 1,
+			Replicas:          1,
+			UpdatedReplicas:   0,
 		},
 	})
 	helm.SetChartStatusFunction(func(releaseName string, namespace string) (string, error) {
@@ -175,10 +197,9 @@ func TestComponentMultipleDependenciesPartiallyMet(t *testing.T) {
 			Name:      "istiod",
 		},
 		Status: appsv1.DeploymentStatus{
-			Replicas:            1,
-			ReadyReplicas:       0,
-			AvailableReplicas:   0,
-			UnavailableReplicas: 1,
+			AvailableReplicas: 1,
+			Replicas:          1,
+			UpdatedReplicas:   0,
 		},
 	})
 	helm.SetChartStatusFunction(func(releaseName string, namespace string) (string, error) {
@@ -200,14 +221,31 @@ func TestComponentMultipleDependenciesMet(t *testing.T) {
 		ChartNamespace: "bar",
 		Dependencies:   []string{istio.ComponentName, "cert-manager"},
 	}
-	client := fake.NewFakeClientWithScheme(k8scheme.Scheme, newReadyDeployment("istiod", "istio-system"),
+	client := fake.NewFakeClientWithScheme(k8scheme.Scheme,
+		newReadyDeployment("istiod", "istio-system"),
+		newReadyDeployment("istio-ingressgateway", "istio-system"),
+		newReadyDeployment("istio-egressgateway", "istio-system"),
 		newReadyDeployment(certManagerDeploymentName, certManagerNamespace),
 		newReadyDeployment(cainjectorDeploymentName, certManagerNamespace),
 		newReadyDeployment(webhookDeploymentName, certManagerNamespace))
+
 	helm.SetChartStatusFunction(func(releaseName string, namespace string) (string, error) {
 		return helm.ChartStatusDeployed, nil
 	})
 	defer helm.SetDefaultChartStatusFunction()
+
+	helm.SetChartInfoFunction(func(chartDir string) (helm.ChartInfo, error) {
+		return helm.ChartInfo{
+			AppVersion: "1.0",
+		}, nil
+	})
+	defer helm.SetDefaultChartInfoFunction()
+
+	helm.SetReleaseAppVersionFunction(func(releaseName string, namespace string) (string, error) {
+		return "1.0", nil
+	})
+	defer helm.SetDefaultReleaseAppVersionFunction()
+
 	ready := ComponentDependenciesMet(comp, spi.NewFakeContext(client, &v1alpha1.Verrazzano{ObjectMeta: metav1.ObjectMeta{Namespace: "foo"}}, false))
 	assert.True(t, ready)
 }
@@ -398,10 +436,9 @@ func newReadyDeployment(name string, namespace string) *appsv1.Deployment {
 			Name:      name,
 		},
 		Status: appsv1.DeploymentStatus{
-			Replicas:            1,
-			ReadyReplicas:       1,
-			AvailableReplicas:   1,
-			UnavailableReplicas: 0,
+			AvailableReplicas: 1,
+			Replicas:          1,
+			UpdatedReplicas:   1,
 		},
 	}
 }
@@ -418,6 +455,10 @@ func (f fakeComponent) Name() string {
 	return f.name
 }
 
+func (f fakeComponent) GetJSONName() string {
+	return f.name
+}
+
 func (f fakeComponent) GetDependencies() []string {
 	return f.dependencies
 }
@@ -426,7 +467,7 @@ func (f fakeComponent) IsReady(_ spi.ComponentContext) bool {
 	return true
 }
 
-func (f fakeComponent) IsEnabled(_ spi.ComponentContext) bool {
+func (f fakeComponent) IsEnabled(effectiveCR *v1alpha1.Verrazzano) bool {
 	return f.enabled
 }
 
@@ -471,5 +512,17 @@ func (f fakeComponent) Reconcile(_ spi.ComponentContext) error {
 }
 
 func (f fakeComponent) GetIngressNames(_ spi.ComponentContext) []types.NamespacedName {
+	return []types.NamespacedName{}
+}
+
+func (f fakeComponent) ValidateInstall(vz *v1alpha1.Verrazzano) error {
+	return nil
+}
+
+func (f fakeComponent) ValidateUpdate(old *v1alpha1.Verrazzano, new *v1alpha1.Verrazzano) error {
+	return nil
+}
+
+func (f fakeComponent) GetCertificateNames(_ spi.ComponentContext) []types.NamespacedName {
 	return []types.NamespacedName{}
 }

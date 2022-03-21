@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -583,7 +584,7 @@ func configureKeycloakRealms(ctx spi.ComponentContext) error {
 	}
 
 	// Create verrazzano-pkce client
-	err = createVerrazzanoPkceClient(ctx, cfg, cli)
+	err = createOrUpdateVerrazzanoPkceClient(ctx, cfg, cli)
 	if err != nil {
 		return err
 	}
@@ -956,11 +957,17 @@ func createUser(ctx spi.ComponentContext, cfg *restclient.Config, cli kubernetes
 	return nil
 }
 
-func createVerrazzanoPkceClient(ctx spi.ComponentContext, cfg *restclient.Config, cli kubernetes.Interface) error {
+func createOrUpdateVerrazzanoPkceClient(ctx spi.ComponentContext, cfg *restclient.Config, cli kubernetes.Interface) error {
 	data := templateData{}
 
 	keycloakClients, err := getKeycloakClients(ctx)
-	if err == nil && clientExists(keycloakClients, "verrazzano-pkce") {
+	if err != nil {
+		return err
+	}
+	if clientExists(keycloakClients, "verrazzano-pkce") {
+		if err := updateKeycloakUris(ctx); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -971,7 +978,21 @@ func createVerrazzanoPkceClient(ctx spi.ComponentContext, cfg *restclient.Config
 		ctx.Log().Errorf("Component Keycloak failed retrieving DNS sub domain: %v", err)
 		return err
 	}
-	ctx.Log().Debugf("createVerrazzanoPkceClient: DNSDomain returned %s", dnsSubDomain)
+	ctx.Log().Debugf("createOrUpdateVerrazzanoPkceClient: DNSDomain returned %s", dnsSubDomain)
+	cr := ctx.EffectiveCR()
+	ingressType, err := vzconfig.GetServiceType(cr)
+	if err != nil {
+		return nil
+	}
+	switch ingressType {
+	case vzapi.NodePort:
+		for _, ports := range cr.Spec.Components.Ingress.Ports {
+			if ports.Port == 443 {
+				dnsSubDomain = fmt.Sprintf("%s:%s", dnsSubDomain, strconv.Itoa(int(ports.NodePort)))
+			}
+		}
+	}
+
 	data.DNSSubDomain = dnsSubDomain
 
 	// use template to get populate template with data
@@ -980,7 +1001,6 @@ func createVerrazzanoPkceClient(ctx spi.ComponentContext, cfg *restclient.Config
 	if err != nil {
 		return err
 	}
-
 	err = t.Execute(&b, &data)
 	if err != nil {
 		return err
@@ -991,13 +1011,13 @@ func createVerrazzanoPkceClient(ctx spi.ComponentContext, cfg *restclient.Config
 		b.String() +
 		"END"
 
-	ctx.Log().Debugf("createVerrazzanoPkceClient: Create verrazzano-pkce client Cmd = %s", vzPkceCreateCmd)
+	ctx.Log().Debugf("createOrUpdateVerrazzanoPkceClient: Create verrazzano-pkce client Cmd = %s", vzPkceCreateCmd)
 	stdout, stderr, err := k8sutil.ExecPod(cli, cfg, kcPod, ComponentName, bashCMD(vzPkceCreateCmd))
 	if err != nil {
 		ctx.Log().Errorf("Component Keycloak failed creating verrazzano-pkce client: stdout = %s, stderr = %s", stdout, stderr)
 		return err
 	}
-	ctx.Log().Debug("createVerrazzanoPkceClient: Created verrazzano-pkce client")
+	ctx.Log().Debug("createOrUpdateVerrazzanoPkceClient: Created verrazzano-pkce client")
 	return nil
 }
 
@@ -1247,12 +1267,12 @@ func isKeycloakReady(ctx spi.ComponentContext) bool {
 		return false
 	}
 
-	statefulsetName := []types.NamespacedName{
+	statefulset := []types.NamespacedName{
 		{
-			Namespace: ComponentNamespace,
 			Name:      ComponentName,
+			Namespace: ComponentNamespace,
 		},
 	}
 	prefix := fmt.Sprintf("Component %s", ctx.GetComponent())
-	return status.StatefulsetReady(ctx.Log(), ctx.Client(), statefulsetName, 1, prefix)
+	return status.StatefulSetsAreReady(ctx.Log(), ctx.Client(), statefulset, 1, prefix)
 }

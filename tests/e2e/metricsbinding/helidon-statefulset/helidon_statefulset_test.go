@@ -15,43 +15,33 @@ import (
 )
 
 const (
-	longWaitTimeout      = 15 * time.Minute
-	longPollingInterval  = 20 * time.Second
 	shortWaitTimeout     = 10 * time.Minute
 	shortPollingInterval = 10 * time.Second
-	namespace            = "hello-helidon-namespace"
 	applicationPodPrefix = "hello-helidon-statefulset-"
 	yamlPath             = "tests/e2e/metricsbinding/testdata/hello-helidon-statefulset.yaml"
-	promConfigJobName    = "hello-helidon-namespace_hello-helidon-statefulset_apps_v1_StatefulSet"
+	promConfigJobName    = "_hello-helidon-statefulset_apps_v1_StatefulSet"
 )
 
-var t = framework.NewTestFramework("statefulsetworkload")
+var (
+	t                  = framework.NewTestFramework("statefulsetworkload")
+	generatedNamespace = pkg.GenerateNamespace("hello-helidon-namespace")
+	clusterDump        = pkg.NewClusterDumpWrapper()
+)
 
-var _ = t.BeforeSuite(func() {
+var _ = clusterDump.BeforeSuite(func() {
 	start := time.Now()
-	metricsbinding.DeployApplication(namespace, yamlPath)
+	metricsbinding.DeployApplication(namespace, yamlPath, applicationPodPrefix)
 	metrics.Emit(t.Metrics.With("deployment_elapsed_time", time.Since(start).Milliseconds()))
 })
 
-var clusterDump = pkg.NewClusterDumpWrapper()
 var _ = clusterDump.AfterEach(func() {}) // Dump cluster if spec fails
 var _ = clusterDump.AfterSuite(func() {  // Dump cluster if aftersuite fails
-	metricsbinding.UndeployApplication(namespace, yamlPath, promConfigJobName)
+	metricsbinding.UndeployApplication(namespace, yamlPath, namespace+promConfigJobName)
 })
 
 var _ = t.AfterEach(func() {})
 
 var _ = t.Describe("Verify application.", Label("f:app-lcm.poko"), func() {
-	t.Context("StatefulSet.", func() {
-		// GIVEN the app is deployed
-		// WHEN the running pods are checked
-		// THEN the Helidon pod should exist
-		t.It("Verify 'hello-helidon-statefulset' pod is running", func() {
-			Eventually(func() bool {
-				return pkg.PodsRunning(namespace, []string{applicationPodPrefix})
-			}, longWaitTimeout, longPollingInterval).Should(BeTrue())
-		})
-	})
 
 	// GIVEN the Helidon app is deployed and the pods are running
 	// WHEN the Prometheus metrics in the app namespace are scraped
@@ -59,7 +49,7 @@ var _ = t.Describe("Verify application.", Label("f:app-lcm.poko"), func() {
 	t.Context("Verify Prometheus scraped metrics.", Label("f:observability.monitoring.prom"), func() {
 		t.It("Check Prometheus config map for scrape target", func() {
 			Eventually(func() bool {
-				return pkg.IsAppInPromConfig(promConfigJobName)
+				return pkg.IsAppInPromConfig(namespace + promConfigJobName)
 			}, shortWaitTimeout, shortPollingInterval).Should(BeTrue(), "Expected application to be found in Prometheus config")
 		})
 		t.It("Retrieve Prometheus scraped metrics for 'hello-helidon-statefulset' Pod", func() {

@@ -17,11 +17,17 @@ import (
 
 // Constants for Kubernetes resource names
 const (
-	OperatorNamespace      = "rancher-operator-system"
-	defaultSecretNamespace = "cert-manager"
-	namespaceLabelKey      = "verrazzano.io/namespace"
-	rancherTLSSecretName   = "tls-ca"
-	defaultVerrazzanoName  = "verrazzano-ca-certificate-secret"
+	fleetSystemNamespace      = "fleet-system"
+	OperatorNamespace         = "rancher-operator-system"
+	defaultSecretNamespace    = "cert-manager"
+	namespaceLabelKey         = "verrazzano.io/namespace"
+	rancherTLSSecretName      = "tls-ca"
+	defaultVerrazzanoName     = "verrazzano-ca-certificate-secret"
+	fleetAgentDeployment      = "fleet-agent"
+	fleetControllerDeployment = "fleet-controller"
+	gitjobDeployment          = "gitjob"
+	rancherWebhookDeployment  = "rancher-webhook"
+	rancherOperatorDeployment = "rancher-operator"
 )
 
 // Helm Chart setter keys
@@ -67,12 +73,33 @@ func getRancherHostname(c client.Client, vz *vzapi.Verrazzano) (string, error) {
 func isRancherReady(ctx spi.ComponentContext) bool {
 	log := ctx.Log()
 	c := ctx.Client()
-	rancherDeploy := []types.NamespacedName{
+	deployments := []types.NamespacedName{
 		{
-			Name:      common.RancherName,
-			Namespace: common.CattleSystem,
+			Name:      ComponentName,
+			Namespace: ComponentNamespace,
+		},
+		{
+			Name:      rancherWebhookDeployment,
+			Namespace: ComponentNamespace,
+		},
+		{
+			Name:      rancherOperatorDeployment,
+			Namespace: OperatorNamespace,
+		},
+		{
+			Name:      fleetAgentDeployment,
+			Namespace: fleetSystemNamespace,
+		},
+		{
+			Name:      fleetControllerDeployment,
+			Namespace: fleetSystemNamespace,
+		},
+		{
+			Name:      gitjobDeployment,
+			Namespace: fleetSystemNamespace,
 		},
 	}
+
 	prefix := fmt.Sprintf("Component %s", ctx.GetComponent())
-	return status.DeploymentsReady(log, c, rancherDeploy, 1, prefix)
+	return status.DeploymentsAreReady(log, c, deployments, 1, prefix)
 }

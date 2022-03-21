@@ -71,7 +71,7 @@ var fakeComponent = externalDNSComponent{}
 func TestIsExternalDNSEnabled(t *testing.T) {
 	localvz := vz.DeepCopy()
 	localvz.Spec.Components.DNS.OCI = &vzapi.OCI{}
-	assert.True(t, fakeComponent.IsEnabled(spi.NewFakeContext(nil, localvz, false)))
+	assert.True(t, fakeComponent.IsEnabled(spi.NewFakeContext(nil, localvz, false).EffectiveCR()))
 }
 
 // TestIsExternalDNSDisabled tests the IsEnabled fn
@@ -79,7 +79,7 @@ func TestIsExternalDNSEnabled(t *testing.T) {
 // WHEN OCI DNS is disabled
 // THEN the function returns true
 func TestIsExternalDNSDisabled(t *testing.T) {
-	assert.False(t, fakeComponent.IsEnabled(spi.NewFakeContext(nil, vz, false)))
+	assert.False(t, fakeComponent.IsEnabled(spi.NewFakeContext(nil, vz, false).EffectiveCR()))
 }
 
 // TestIsExternalDNSReady tests the isExternalDNSReady fn
@@ -191,26 +191,25 @@ func TestExternalDNSPreInstall3InvalidScope(t *testing.T) {
 }
 
 // Create a new deployment object for testing
-func newDeployment(name string, ready bool) *appsv1.Deployment {
+func newDeployment(name string, updated bool) *appsv1.Deployment {
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: ComponentNamespace,
 			Name:      name,
+			Labels:    map[string]string{"app.kubernetes.io/instance": "external-dns"},
 		},
 		Status: appsv1.DeploymentStatus{
-			Replicas:            1,
-			ReadyReplicas:       1,
-			AvailableReplicas:   1,
-			UnavailableReplicas: 0,
+			AvailableReplicas: 1,
+			Replicas:          1,
+			UpdatedReplicas:   1,
 		},
 	}
 
-	if !ready {
+	if !updated {
 		deployment.Status = appsv1.DeploymentStatus{
-			Replicas:            1,
-			ReadyReplicas:       0,
-			AvailableReplicas:   0,
-			UnavailableReplicas: 1,
+			AvailableReplicas: 1,
+			Replicas:          1,
+			UpdatedReplicas:   0,
 		}
 	}
 	return deployment
