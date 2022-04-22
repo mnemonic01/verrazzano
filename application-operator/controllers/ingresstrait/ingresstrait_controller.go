@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
+
 	vzconst "github.com/verrazzano/verrazzano/pkg/constants"
 	vzlogInit "github.com/verrazzano/verrazzano/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -675,7 +677,7 @@ func (r *Reconciler) mutateDestinationRule(destinationRule *istioclient.Destinat
 // setupWatches Sets up watches for the IngressTrait controller
 func (r *Reconciler) setupWatches() error {
 	// Set up a watch on the Console/Authproxy ingress to watch for changes in the Domain name;
-	return r.Controller.Watch(
+	err := r.Controller.Watch(
 		&source.Kind{Type: &k8net.Ingress{}},
 		// The handler for the Watch is a map function to map the detected change into requests to reconcile any
 		// existing ingress traits and invoke the IngressTrait Reconciler; this should cause us to update the
@@ -689,6 +691,30 @@ func (r *Reconciler) setupWatches() error {
 			},
 		},
 	)
+	if err != nil {
+		zap.S().Errorf("--------Failed to watch Ingress: %v", err)
+		return err
+	}
+	// Set up a watch on the Verrazzano to watch for changes in the Istio Ingress
+	err = r.Controller.Watch(
+		&source.Kind{Type: &v1alpha1.Verrazzano{}},
+		// The handler for the Watch is a map function to map the detected change into requests to reconcile any
+		// existing ingress traits and invoke the IngressTrait Reconciler; this should cause us to update the
+		// VS and GW records for the associated apps.
+		handler.EnqueueRequestsFromMapFunc(func(a client.Object) []reconcile.Request {
+			return r.createIngressTraitReconcileRequests()
+		}),
+		predicate.Funcs{
+			UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+				return r.isIstioIngressUpdated(updateEvent)
+			},
+		},
+	)
+	if err != nil {
+		zap.S().Errorf("--------Failed to watch Verrazzano: %v", err)
+		return err
+	}
+	return nil
 }
 
 // isConsoleIngressUpdated Predicate func used by the Ingress watcher, returns true if the TLS settings have changed;
@@ -702,6 +728,30 @@ func (r *Reconciler) isConsoleIngressUpdated(updateEvent event.UpdateEvent) bool
 	r.Log.Debugf("Checking object %s/%s", oldIngress.Namespace, oldIngress.Name)
 	newIngress := updateEvent.ObjectNew.(*k8net.Ingress)
 	return !reflect.DeepEqual(oldIngress.Spec, newIngress.Spec)
+}
+
+// isIstioIngressUpdated Predicate func used by the Ingress watcher, returns true if the Istio Ingress has changed;
+// - this is largely to attempt to scope the change detection to Host name changes
+func (r *Reconciler) isIstioIngressUpdated(updateEvent event.UpdateEvent) bool {
+	oldVZ := updateEvent.ObjectOld.(*v1alpha1.Verrazzano)
+	// We only need to check the Istio Ingress
+	r.Log.Debugf("Checking object %s/%s", oldVZ.Namespace, oldVZ.Name)
+	newVZ := updateEvent.ObjectNew.(*v1alpha1.Verrazzano)
+	return !reflect.DeepEqual(getIstioIngressSettings(oldVZ), getIstioIngressSettings(newVZ)) || !reflect.DeepEqual(getIstioInstallArgs(oldVZ), getIstioInstallArgs(newVZ))
+}
+
+func getIstioIngressSettings(vz *v1alpha1.Verrazzano) *v1alpha1.IstioIngressSection {
+	if vz != nil && vz.Spec.Components.Istio != nil {
+		return vz.Spec.Components.Istio.Ingress
+	}
+	return nil
+}
+
+func getIstioInstallArgs(vz *v1alpha1.Verrazzano) []v1alpha1.InstallArgs {
+	if vz != nil && vz.Spec.Components.Istio != nil {
+		return vz.Spec.Components.Istio.IstioInstallArgs
+	}
+	return nil
 }
 
 //createIngressTraitReconcileRequests Used by the Console ingress watcher to map a detected change in the ingress
