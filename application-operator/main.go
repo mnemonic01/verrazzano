@@ -7,8 +7,6 @@ import (
 	"flag"
 	"os"
 
-	"github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
-
 	"github.com/crossplane/oam-kubernetes-runtime/apis/core"
 	certapiv1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	vzapp "github.com/verrazzano/verrazzano/application-operator/apis/app/v1alpha1"
@@ -64,7 +62,6 @@ func init() {
 
 	// Add ingress trait to scheme
 	_ = vzapi.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
 	_ = vzapp.AddToScheme(scheme)
 	_ = istioclinet.AddToScheme(scheme)
 	_ = wls.AddToScheme(scheme)

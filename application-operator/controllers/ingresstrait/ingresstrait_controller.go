@@ -10,8 +10,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
-
 	vzconst "github.com/verrazzano/verrazzano/pkg/constants"
 	vzlogInit "github.com/verrazzano/verrazzano/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -676,8 +674,26 @@ func (r *Reconciler) mutateDestinationRule(destinationRule *istioclient.Destinat
 
 // setupWatches Sets up watches for the IngressTrait controller
 func (r *Reconciler) setupWatches() error {
-	// Set up a watch on the istio-ingressgateway service to watch for changes in the address;
+	// Set up a watch on the Console/Authproxy ingress to watch for changes in the Domain name;
 	err := r.Controller.Watch(
+		&source.Kind{Type: &k8net.Ingress{}},
+		// The handler for the Watch is a map function to map the detected change into requests to reconcile any
+		// existing ingress traits and invoke the IngressTrait Reconciler; this should cause us to update the
+		// VS and GW records for the associated apps.
+		handler.EnqueueRequestsFromMapFunc(func(a client.Object) []reconcile.Request {
+			return r.createIngressTraitReconcileRequests()
+		}),
+		predicate.Funcs{
+			UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+				return r.isConsoleIngressUpdated(updateEvent)
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
+	// Set up a watch on the istio-ingressgateway service to watch for changes in the address;
+	err = r.Controller.Watch(
 		&source.Kind{Type: &corev1.Service{}},
 		// The handler for the Watch is a map function to map the detected change into requests to reconcile any
 		// existing ingress traits and invoke the IngressTrait Reconciler; this should cause us to update the
@@ -694,21 +710,23 @@ func (r *Reconciler) setupWatches() error {
 	if err != nil {
 		return err
 	}
-	// Set up a watch on the Verrazzano for changes in the IstioIngressSection/DNSComponent/EnvironmentName
-	return r.Controller.Watch(
-		&source.Kind{Type: &v1alpha1.Verrazzano{}},
-		// The handler for the Watch is a map function to map the detected change into requests to reconcile any
-		// existing ingress traits and invoke the IngressTrait Reconciler; this should cause us to update the
-		// VS and GW records for the associated apps.
-		handler.EnqueueRequestsFromMapFunc(func(a client.Object) []reconcile.Request {
-			return r.createIngressTraitReconcileRequests()
-		}),
-		predicate.Funcs{
-			UpdateFunc: func(updateEvent event.UpdateEvent) bool {
-				return r.isVerrazzanoUpdated(updateEvent)
-			},
-		},
-	)
+	return nil
+}
+
+// isConsoleIngressUpdated Predicate func used by the Ingress watcher, returns true if the TLS settings have changed;
+// - this is largely to attempt to scope the change detection to Host name changes
+func (r *Reconciler) isConsoleIngressUpdated(updateEvent event.UpdateEvent) bool {
+	oldIngress := updateEvent.ObjectOld.(*k8net.Ingress)
+	// We only need to check the Authproxy/console Ingress
+	if oldIngress.Namespace != vzconst.VerrazzanoSystemNamespace || oldIngress.Name != constants.VzConsoleIngress {
+		return false
+	}
+	newIngress := updateEvent.ObjectNew.(*k8net.Ingress)
+	if !reflect.DeepEqual(oldIngress.Spec, newIngress.Spec) {
+		r.Log.Infof("Ingress %s/%s has changed", oldIngress.Namespace, oldIngress.Name)
+		return true
+	}
+	return false
 }
 
 // isIstioIngressGatewayUpdated Predicate func used by the watcher
@@ -723,59 +741,6 @@ func (r *Reconciler) isIstioIngressGatewayUpdated(updateEvent event.UpdateEvent)
 		return true
 	}
 	return false
-}
-
-// isVerrazzanoUpdated Predicate func used by the Ingress watcher, returns true if the IstioIngressSection/DNSComponent/EnvironmentName have changed;
-func (r *Reconciler) isVerrazzanoUpdated(updateEvent event.UpdateEvent) bool {
-	oldVZ := updateEvent.ObjectOld.(*v1alpha1.Verrazzano)
-	r.Log.Infof("Checking Verrazzano resource %s/%s", oldVZ.Namespace, oldVZ.Name)
-	newVZ := updateEvent.ObjectNew.(*v1alpha1.Verrazzano)
-	if !reflect.DeepEqual(getIstioIngressSettings(oldVZ), getIstioIngressSettings(newVZ)) {
-		r.Log.Infof("Istio Ingress has changed in Verrazzano resource %s/%s", oldVZ.Namespace, oldVZ.Name)
-		return true
-	}
-	if !reflect.DeepEqual(getIstioInstallArgs(oldVZ), getIstioInstallArgs(newVZ)) {
-		r.Log.Infof("IstioInstallArgs has changed in Verrazzano resource %s/%s", oldVZ.Namespace, oldVZ.Name)
-		return true
-	}
-	if !reflect.DeepEqual(getEnvName(oldVZ), getEnvName(newVZ)) {
-		r.Log.Infof("EnvironmentName has changed in Verrazzano resource %s/%s", oldVZ.Namespace, oldVZ.Name)
-		return true
-	}
-	if !reflect.DeepEqual(getDNSConfig(oldVZ), getDNSConfig(newVZ)) {
-		r.Log.Infof("DNS has changed in Verrazzano resource %s/%s", oldVZ.Namespace, oldVZ.Name)
-		return true
-	}
-	return false
-}
-
-func getEnvName(vz *v1alpha1.Verrazzano) string {
-	envName := "default"
-	if vz != nil && len(vz.Spec.EnvironmentName) > 0 {
-		envName = vz.Spec.EnvironmentName
-	}
-	return envName
-}
-
-func getDNSConfig(vz *v1alpha1.Verrazzano) *v1alpha1.DNSComponent {
-	if vz != nil {
-		return vz.Spec.Components.DNS
-	}
-	return nil
-}
-
-func getIstioIngressSettings(vz *v1alpha1.Verrazzano) *v1alpha1.IstioIngressSection {
-	if vz != nil && vz.Spec.Components.Istio != nil {
-		return vz.Spec.Components.Istio.Ingress
-	}
-	return nil
-}
-
-func getIstioInstallArgs(vz *v1alpha1.Verrazzano) []v1alpha1.InstallArgs {
-	if vz != nil && vz.Spec.Components.Istio != nil {
-		return vz.Spec.Components.Istio.IstioInstallArgs
-	}
-	return nil
 }
 
 //createIngressTraitReconcileRequests Used by the Console ingress watcher to map a detected change in the ingress
