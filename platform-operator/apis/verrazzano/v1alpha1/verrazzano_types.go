@@ -4,6 +4,7 @@
 package v1alpha1
 
 import (
+	vmov1 "github.com/verrazzano/verrazzano-monitoring-operator/pkg/apis/vmcontroller/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -162,8 +163,10 @@ type ComponentStatusDetails struct {
 	State CompStateType `json:"state,omitempty"`
 	// The version of Verrazzano that is installed
 	Version string `json:"version,omitempty"`
-	// The generation of the last VZ resource the Component was reconciled against
+	// The generation of the last VZ resource the Component was successfully reconciled against
 	LastReconciledGeneration int64 `json:"lastReconciledGeneration,omitempty"`
+	// The generation of the VZ resource the Component is currently being reconciled against
+	ReconcilingGeneration int64 `json:"reconcilingGeneration,omitempty"`
 }
 
 // ConditionType identifies the condition of the install/uninstall/upgrade which can be checked with kubectl wait
@@ -193,6 +196,9 @@ const (
 
 	// CondUpgradeStarted means that an upgrade has been started.
 	CondUpgradeStarted ConditionType = "UpgradeStarted"
+
+	// CondUpgradePaused means that an upgrade has been paused awaiting a VZ version update.
+	CondUpgradePaused ConditionType = "UpgradePaused"
 
 	// CondUpgradeFailed means the upgrade has failed during execution.
 	CondUpgradeFailed ConditionType = "UpgradeFailed"
@@ -227,6 +233,9 @@ const (
 
 	// VzStateUpgrading is the state when an upgrade is in progress
 	VzStateUpgrading VzStateType = "Upgrading"
+
+	// VzStatePaused is the state when an upgrade is paused due to version mismatch
+	VzStatePaused VzStateType = "Paused"
 
 	// VzStateReady is the state when a Verrazzano resource can perform an uninstall or upgrade
 	VzStateReady VzStateType = "Ready"
@@ -327,13 +336,29 @@ type ComponentSpec struct {
 	// +optional
 	Kibana *KibanaComponent `json:"kibana,omitempty"`
 
+	// KubeStateMetrics configuration
+	// +optional
+	KubeStateMetrics *KubeStateMetricsComponent `json:"kubeStateMetrics,omitempty"`
+
 	// Prometheus configuration
 	// +optional
 	Prometheus *PrometheusComponent `json:"prometheus,omitempty"`
 
+	// PrometheusAdapter configuration
+	// +optional
+	PrometheusAdapter *PrometheusAdapterComponent `json:"prometheusAdapter,omitempty"`
+
+	// PrometheusNodeExporter configuration
+	// +optional
+	PrometheusNodeExporter *PrometheusNodeExporterComponent `json:"prometheusNodeExporter,omitempty"`
+
 	// PrometheusOperator configuration
 	// +optional
 	PrometheusOperator *PrometheusOperatorComponent `json:"prometheusOperator,omitempty"`
+
+	// PrometheusPushgateway configuration
+	// +optional
+	PrometheusPushgateway *PrometheusPushgatewayComponent `json:"prometheusPushgateway,omitempty"`
 
 	// Rancher configuration
 	// +optional
@@ -362,11 +387,31 @@ type ElasticsearchComponent struct {
 	// +optional
 	// +patchMergeKey=name
 	// +patchStrategy=merge,retainKeys
-	ESInstallArgs []InstallArgs `json:"installArgs,omitempty" patchStrategy:"merge,retainKeys" patchMergeKey:"name"`
+	ESInstallArgs []InstallArgs                 `json:"installArgs,omitempty" patchStrategy:"merge,retainKeys" patchMergeKey:"name"`
+	Policies      []vmov1.IndexManagementPolicy `json:"policies,omitempty"`
+	Nodes         []OpenSearchNode              `json:"nodes,omitempty"`
+}
+
+//OpenSearchNode specifies a node group in the OpenSearch cluster
+type OpenSearchNode struct {
+	Name      string                       `json:"name,omitempty"`
+	Replicas  int32                        `json:"replicas,omitempty"`
+	Roles     []vmov1.NodeRole             `json:"roles,omitempty"`
+	Storage   *OpenSearchNodeStorage       `json:"storage,omitempty"`
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+type OpenSearchNodeStorage struct {
+	Size string `json:"size"`
 }
 
 // KibanaComponent specifies the Kibana configuration.
 type KibanaComponent struct {
+	MonitoringComponent `json:",inline"`
+}
+
+// KubeStateMetricsComponent specifies the kube-state-metrics configuration.
+type KubeStateMetricsComponent struct {
 	MonitoringComponent `json:",inline"`
 }
 
@@ -380,10 +425,26 @@ type PrometheusComponent struct {
 	MonitoringComponent `json:",inline"`
 }
 
+// PrometheusAdapterComponent specifies the Prometheus Adapter configuration.
+type PrometheusAdapterComponent struct {
+	MonitoringComponent `json:",inline"`
+}
+
+// PrometheusNodeExporterComponent specifies the Prometheus Node Exporter configuration.
+type PrometheusNodeExporterComponent struct {
+	MonitoringComponent `json:",inline"`
+}
+
 // PrometheusOperatorComponent specifies the Prometheus Operator configuration
 type PrometheusOperatorComponent struct {
 	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
+	Enabled            *bool `json:"enabled,omitempty"`
+	HelmValueOverrides `json:",inline"`
+}
+
+// PrometheusPushgatewayComponent specifies the Prometheus Pushgateway configuration.
+type PrometheusPushgatewayComponent struct {
+	MonitoringComponent `json:",inline"`
 }
 
 // CertManagerComponent specifies the core CertManagerComponent config.
@@ -677,3 +738,23 @@ type OciLoggingConfiguration struct {
 	SystemLogID     string `json:"systemLogId"`
 	APISecret       string `json:"apiSecret,omitempty"`
 }
+
+type HelmValueOverrides struct {
+	MonitorChanges *WatchHelmValues `json:"monitorChanges,omitempty"`
+	ValueOverrides []Overrides      `json:"overrides,omitempty"`
+}
+
+type Overrides struct {
+	ConfigMapRef *ConfigMapRef `json:"configMapRef,omitempty"`
+	SecretRef    *SecretRef    `json:"secretRef,omitempty"`
+}
+
+type ConfigMapRef struct {
+	ConfigMapKeySelector *corev1.ConfigMapKeySelector `json:",inline"`
+}
+
+type SecretRef struct {
+	SecretKeySelector *corev1.SecretKeySelector `json:",inline"`
+}
+
+type WatchHelmValues bool

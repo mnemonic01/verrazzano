@@ -5,8 +5,9 @@ package nginx
 
 import (
 	"fmt"
-	k8s "github.com/verrazzano/verrazzano/platform-operator/internal/nodeport"
 	"path/filepath"
+
+	k8s "github.com/verrazzano/verrazzano/platform-operator/internal/nodeport"
 
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/istio"
 
@@ -75,7 +76,7 @@ func (c nginxComponent) IsReady(ctx spi.ComponentContext) bool {
 // ValidateUpdate checks if the specified new Verrazzano CR is valid for this component to be updated
 func (c nginxComponent) ValidateUpdate(old *vzapi.Verrazzano, new *vzapi.Verrazzano) error {
 	if c.IsEnabled(old) && !c.IsEnabled(new) {
-		return fmt.Errorf("can not disable previously enabled %s", ComponentJSONName)
+		return fmt.Errorf("Disabling component %s is not allowed", ComponentJSONName)
 	}
 	return nil
 }

@@ -1,27 +1,26 @@
 // Copyright (c) 2021, 2022, Oracle and/or its affiliates.
 // Licensed under the Universal Permissive License v 1.0 as shown at https://oss.oracle.com/licenses/upl.
+
 package keycloak
 
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-
-	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
-	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/certmanager"
-	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/nginx"
-
 	ctrlerrors "github.com/verrazzano/verrazzano/pkg/controller/errors"
+	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 	"github.com/verrazzano/verrazzano/platform-operator/constants"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/certmanager"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/common"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/helm"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/istio"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/mysql"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/nginx"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
 	"github.com/verrazzano/verrazzano/platform-operator/internal/config"
-	"github.com/verrazzano/verrazzano/platform-operator/internal/vzconfig"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"path/filepath"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -42,6 +41,10 @@ type KeycloakComponent struct {
 // Verify that KeycloakComponent implements Component
 var _ spi.Component = KeycloakComponent{}
 
+var certificates = []types.NamespacedName{
+	{Namespace: ComponentNamespace, Name: keycloakCertificateName},
+}
+
 // NewComponent returns a new Keycloak component
 func NewComponent() spi.Component {
 	return KeycloakComponent{
@@ -56,6 +59,7 @@ func NewComponent() spi.Component {
 			Dependencies:            []string{istio.ComponentName, nginx.ComponentName, certmanager.ComponentName},
 			SupportsOperatorInstall: true,
 			AppendOverridesFunc:     AppendKeycloakOverrides,
+			Certificates:            certificates,
 			IngressNames: []types.NamespacedName{
 				{
 					Namespace: ComponentNamespace,
@@ -66,8 +70,20 @@ func NewComponent() spi.Component {
 	}
 }
 
+// Reconcile - the only condition currently being handled by this function is to restore
+// the Keycloak configuration when the MySQL pod gets restarted and ephemeral storage is being used.
+func (c KeycloakComponent) Reconcile(ctx spi.ComponentContext) error {
+	// If the Keycloak component is ready, confirm the configuration is working.
+	// If ephemeral storage is being used, the Keycloak configuration will be rebuilt if needed.
+	if isKeycloakReady(ctx) {
+		ctx.Log().Debugf("Component %s calling configureKeycloakRealms from Reconcile", ComponentName)
+		return configureKeycloakRealms(ctx)
+	}
+	return fmt.Errorf("Component %s not ready yet to check configuration", ComponentName)
+}
+
 func (c KeycloakComponent) PreInstall(ctx spi.ComponentContext) error {
-	// Check Verrazzano Secret. return error which will cause reque
+	// Check Verrazzano Secret. return error which will cause requeue
 	secret := &corev1.Secret{}
 	err := ctx.Client().Get(context.TODO(), client.ObjectKey{
 		Namespace: constants.VerrazzanoSystemNamespace,
@@ -125,27 +141,22 @@ func (c KeycloakComponent) PostInstall(ctx spi.ComponentContext) error {
 		return err
 	}
 
-	// If OCI DNS, update annotation on Keycloak Ingress
-	if vzconfig.IsExternalDNSEnabled(ctx.EffectiveCR()) {
-		err := updateKeycloakIngress(ctx)
-		if err != nil {
-			return err
-		}
+	// Update annotations on Keycloak Ingress
+	err = updateKeycloakIngress(ctx)
+	if err != nil {
+		return err
 	}
 
-	// populate the certificate names before calling PostInstall on Helm component because those will be needed there
-	c.HelmComponent.Certificates = c.GetCertificateNames(ctx)
 	return c.HelmComponent.PostInstall(ctx)
 }
 
 // PostUpgrade Keycloak-post-upgrade processing, create or update the Kiali ingress
 func (c KeycloakComponent) PostUpgrade(ctx spi.ComponentContext) error {
-	// populate the certificate names before calling PostInstall on Helm component because those will be needed there
-	c.HelmComponent.Certificates = c.GetCertificateNames(ctx)
 	if err := c.HelmComponent.PostUpgrade(ctx); err != nil {
 		return err
 	}
-	return updateKeycloakUris(ctx)
+
+	return configureKeycloakRealms(ctx)
 }
 
 // IsEnabled Keycloak-specific enabled check for installation
@@ -167,20 +178,20 @@ func (c KeycloakComponent) IsReady(ctx spi.ComponentContext) bool {
 
 // ValidateUpdate checks if the specified new Verrazzano CR is valid for this component to be updated
 func (c KeycloakComponent) ValidateUpdate(old *vzapi.Verrazzano, new *vzapi.Verrazzano) error {
+	// Do not allow any changes except to enable the component post-install
 	if c.IsEnabled(old) && !c.IsEnabled(new) {
-		return fmt.Errorf("can not disable previously enabled %s", ComponentJSONName)
+		return fmt.Errorf("Disabling component %s is not allowed", ComponentJSONName)
+	}
+	// Reject any other edits for now
+	if err := common.CompareInstallArgs(c.getInstallArgs(old), c.getInstallArgs(new)); err != nil {
+		return fmt.Errorf("Updates to istioInstallArgs not allowed for %s", ComponentJSONName)
 	}
 	return nil
 }
 
-// GetCertificateNames - gets the names of the ingresses associated with this component
-func (c KeycloakComponent) GetCertificateNames(ctx spi.ComponentContext) []types.NamespacedName {
-	var certificateNames []types.NamespacedName
-
-	certificateNames = append(certificateNames, types.NamespacedName{
-		Namespace: ComponentNamespace,
-		Name:      fmt.Sprintf("%s-secret", ctx.EffectiveCR().Spec.EnvironmentName),
-	})
-
-	return certificateNames
+func (c KeycloakComponent) getInstallArgs(vz *vzapi.Verrazzano) []vzapi.InstallArgs {
+	if vz != nil && vz.Spec.Components.Keycloak != nil {
+		return vz.Spec.Components.Keycloak.KeycloakInstallArgs
+	}
+	return nil
 }

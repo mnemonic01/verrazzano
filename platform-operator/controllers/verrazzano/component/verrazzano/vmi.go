@@ -6,7 +6,6 @@ package verrazzano
 import (
 	"context"
 	"fmt"
-
 	vmov1 "github.com/verrazzano/verrazzano-monitoring-operator/pkg/apis/vmcontroller/v1"
 	globalconst "github.com/verrazzano/verrazzano/pkg/constants"
 	"github.com/verrazzano/verrazzano/pkg/security/password"
@@ -14,6 +13,7 @@ import (
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
 	"github.com/verrazzano/verrazzano/platform-operator/internal/vzconfig"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -184,6 +184,13 @@ func newOpenSearch(cr *vzapi.Verrazzano, storage *resourceRequestValues, vmi *vm
 				RequestMemory: "2.5Gi",
 			},
 		},
+		// adapt the VPO node list to VMI node list
+		Nodes: nodeAdapter(vmi, cr.Spec.Components.Elasticsearch.Nodes, storage),
+	}
+
+	// Proxy any ISM policies to the VMI
+	for _, policy := range opensearchComponent.Policies {
+		opensearch.Policies = append(opensearch.Policies, *policy.DeepCopy())
 	}
 
 	// Set the values in the OpenSearch object from the Verrazzano component InstallArgs
@@ -208,6 +215,10 @@ func newOpenSearch(cr *vzapi.Verrazzano, storage *resourceRequestValues, vmi *vm
 		opensearch.MasterNode.Storage = &vmi.Spec.Elasticsearch.Storage
 		if vmi.Spec.Elasticsearch.MasterNode.Storage != nil {
 			opensearch.MasterNode.Storage = vmi.Spec.Elasticsearch.MasterNode.Storage.DeepCopy()
+		}
+		// PVC Names should be preserved
+		if vmi.Spec.Elasticsearch.DataNode.Storage != nil {
+			opensearch.DataNode.Storage.PvcNames = vmi.Spec.Elasticsearch.DataNode.Storage.PvcNames
 		}
 	}
 
@@ -277,7 +288,15 @@ func newOpenSearchDashboards(cr *vzapi.Verrazzano) vmov1.Kibana {
 }
 
 func setupSharedVMIResources(ctx spi.ComponentContext) error {
-	return ensureVMISecret(ctx.Client())
+	err := ensureVMISecret(ctx.Client())
+	if err != nil {
+		return err
+	}
+	err = ensureBackupSecret(ctx.Client())
+	if err != nil {
+		return err
+	}
+	return ensureGrafanaAdminSecret(ctx.Client())
 }
 
 func ensureVMISecret(cli client.Client) error {
@@ -302,4 +321,107 @@ func ensureVMISecret(cli client.Client) error {
 		return err
 	}
 	return nil
+}
+
+func ensureBackupSecret(cli client.Client) error {
+	secret := &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      verrazzanoBackupScrtName,
+			Namespace: globalconst.VerrazzanoSystemNamespace,
+		},
+		Data: map[string][]byte{},
+	}
+	if _, err := controllerruntime.CreateOrUpdate(context.TODO(), cli, secret, func() error {
+		// Populating dummy keys for access and secret key so that they are never empty
+		if secret.Data[objectstoreAccessKey] == nil || secret.Data[objectstoreAccessSecretKey] == nil {
+			key, err := password.GeneratePassword(32)
+			if err != nil {
+				return err
+			}
+			secret.Data[objectstoreAccessKey] = []byte(key)
+			secret.Data[objectstoreAccessSecretKey] = []byte(key)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureGrafanaAdminSecret(cli client.Client) error {
+	secret := &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      grafanaScrtName,
+			Namespace: globalconst.VerrazzanoSystemNamespace,
+		},
+		Data: map[string][]byte{},
+	}
+	if _, err := controllerruntime.CreateOrUpdate(context.TODO(), cli, secret, func() error {
+		if secret.Data["username"] == nil || secret.Data["password"] == nil {
+			secret.Data["username"] = []byte(ComponentName)
+			pw, err := password.GeneratePassword(32)
+			if err != nil {
+				return err
+			}
+			secret.Data["password"] = []byte(pw)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func nodeAdapter(vmi *vmov1.VerrazzanoMonitoringInstance, nodes []vzapi.OpenSearchNode, storage *resourceRequestValues) []vmov1.ElasticsearchNode {
+	getQuantity := func(q *resource.Quantity) string {
+		if q == nil || q.String() == "0" {
+			return ""
+		}
+		return q.String()
+	}
+	var vmoNodes []vmov1.ElasticsearchNode
+	for _, node := range nodes {
+		var storageSize string
+		if storage != nil && storage.Storage != "" {
+			storageSize = storage.Storage
+		}
+		if node.Storage != nil {
+			storageSize = node.Storage.Size
+		}
+		resources := vmov1.Resources{}
+		if node.Resources != nil {
+			resources.RequestCPU = getQuantity(node.Resources.Requests.Cpu())
+			resources.LimitCPU = getQuantity(node.Resources.Limits.Cpu())
+			resources.RequestMemory = getQuantity(node.Resources.Requests.Memory())
+			resources.LimitMemory = getQuantity(node.Resources.Limits.Memory())
+		}
+		vmoNode := vmov1.ElasticsearchNode{
+			Name:      node.Name,
+			JavaOpts:  "",
+			Replicas:  node.Replicas,
+			Roles:     node.Roles,
+			Resources: resources,
+			Storage: &vmov1.Storage{
+				Size: storageSize,
+			},
+		}
+		// if the node was present in an existing VMI and has PVC names, they should be carried over
+		setPVCNames(vmi, &vmoNode)
+		vmoNodes = append(vmoNodes, vmoNode)
+	}
+	return vmoNodes
+}
+
+//setPVCNames persists any PVC names from an existing VMI
+func setPVCNames(vmi *vmov1.VerrazzanoMonitoringInstance, node *vmov1.ElasticsearchNode) {
+	if vmi != nil {
+		for _, nodeGroup := range vmi.Spec.Elasticsearch.Nodes {
+			if nodeGroup.Name == node.Name {
+				if nodeGroup.Storage != nil {
+					node.Storage.PvcNames = nodeGroup.Storage.PvcNames
+				}
+				return
+			}
+		}
+	}
 }

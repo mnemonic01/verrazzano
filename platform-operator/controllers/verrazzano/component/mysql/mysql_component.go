@@ -5,10 +5,10 @@ package mysql
 
 import (
 	"fmt"
-	"path/filepath"
-
 	"github.com/verrazzano/verrazzano/pkg/bom"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/common"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/istio"
+	"path/filepath"
 
 	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 
@@ -84,6 +84,8 @@ func (c mysqlComponent) PostInstall(ctx spi.ComponentContext) error {
 
 // ValidateUpdate checks if the specified new Verrazzano CR is valid for this component to be updated
 func (c mysqlComponent) ValidateUpdate(old *vzapi.Verrazzano, new *vzapi.Verrazzano) error {
+	// Block all changes for now, particularly around storage changes
+
 	// compare the VolumeSourceOverrides and reject if the type or size or storage class is different
 	oldSetting, err := doGenerateVolumeSourceOverrides(old, []bom.KeyValue{})
 	if err != nil {
@@ -93,14 +95,26 @@ func (c mysqlComponent) ValidateUpdate(old *vzapi.Verrazzano, new *vzapi.Verrazz
 	if err != nil {
 		return err
 	}
+	// Reject any persistence-specific changes via the mysqlInstallArgs settings
 	if bom.FindKV(oldSetting, "persistence.enabled") != bom.FindKV(newSetting, "persistence.enabled") {
-		return fmt.Errorf("can not change persistence type in component: %s", ComponentJSONName)
+		return fmt.Errorf("Can not change persistence enabled setting in component: %s", ComponentJSONName)
 	}
 	if bom.FindKV(oldSetting, "persistence.size") != bom.FindKV(newSetting, "persistence.size") {
-		return fmt.Errorf("can not change persistence volume size in component: %s", ComponentJSONName)
+		return fmt.Errorf("Can not change persistence volume size in component: %s", ComponentJSONName)
 	}
 	if bom.FindKV(oldSetting, "persistence.storageClass") != bom.FindKV(newSetting, "persistence.storageClass") {
-		return fmt.Errorf("can not change persistence storage class in component: %s", ComponentJSONName)
+		return fmt.Errorf("Can not change persistence storage class in component: %s", ComponentJSONName)
+	}
+	// Reject any installArgs changes for now
+	if err := common.CompareInstallArgs(c.getInstallArgs(old), c.getInstallArgs(new)); err != nil {
+		return fmt.Errorf("Updates to mysqlInstallArgs not allowed for %s", ComponentJSONName)
+	}
+	return nil
+}
+
+func (c mysqlComponent) getInstallArgs(vz *vzapi.Verrazzano) []vzapi.InstallArgs {
+	if vz != nil && vz.Spec.Components.Keycloak != nil {
+		return vz.Spec.Components.Keycloak.MySQL.MySQLInstallArgs
 	}
 	return nil
 }

@@ -22,7 +22,6 @@ import (
 	"github.com/verrazzano/verrazzano/platform-operator/internal/config"
 	v1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -67,7 +66,7 @@ func TestPreUpgrade(t *testing.T) {
 	// The actual pre-upgrade testing is performed by the underlying unit tests, this just adds coverage
 	// for the Component interface hook
 	config.TestHelmConfigDir = "../../../../helm_config"
-	err := NewComponent().PreUpgrade(spi.NewFakeContext(fake.NewFakeClientWithScheme(testScheme), &vzapi.Verrazzano{}, false))
+	err := NewComponent().PreUpgrade(spi.NewFakeContext(fake.NewClientBuilder().WithScheme(testScheme).Build(), &vzapi.Verrazzano{}, false))
 	assert.NoError(t, err)
 }
 
@@ -76,8 +75,8 @@ func TestPreUpgrade(t *testing.T) {
 //  WHEN I call PreInstall when dependencies are met
 //  THEN no error is returned
 func TestPreInstall(t *testing.T) {
-	client := createPreInstallTestClient()
-	ctx := spi.NewFakeContext(client, &vzapi.Verrazzano{}, false)
+	c := createPreInstallTestClient()
+	ctx := spi.NewFakeContext(c, &vzapi.Verrazzano{}, false)
 	err := NewComponent().PreInstall(ctx)
 	assert.NoError(t, err)
 }
@@ -87,8 +86,8 @@ func TestPreInstall(t *testing.T) {
 //  WHEN I call Install when dependencies are met
 //  THEN no error is returned
 func TestInstall(t *testing.T) {
-	client := createPreInstallTestClient()
-	ctx := spi.NewFakeContext(client, &vzapi.Verrazzano{
+	c := createPreInstallTestClient()
+	ctx := spi.NewFakeContext(c, &vzapi.Verrazzano{
 		Spec: vzapi.VerrazzanoSpec{
 			Components: dnsComponents,
 		},
@@ -109,8 +108,8 @@ func TestInstall(t *testing.T) {
 //  WHEN I call PostInstall
 //  THEN no error is returned
 func TestPostInstall(t *testing.T) {
-	client := fake.NewFakeClientWithScheme(testScheme)
-	ctx := spi.NewFakeContext(client, &vzapi.Verrazzano{
+	c := fake.NewClientBuilder().WithScheme(testScheme).Build()
+	ctx := spi.NewFakeContext(c, &vzapi.Verrazzano{
 		Spec: vzapi.VerrazzanoSpec{
 			Components: dnsComponents,
 		},
@@ -125,13 +124,13 @@ func TestPostInstall(t *testing.T) {
 	// when all the ingresses are present in the cluster
 	vzIngressNames := vzComp.(verrazzanoComponent).GetIngressNames(ctx)
 	for _, ingressName := range vzIngressNames {
-		client.Create(context.TODO(), &v1.Ingress{
+		_ = c.Create(context.TODO(), &v1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: ingressName.Name, Namespace: ingressName.Namespace},
 		})
 	}
 	for _, certName := range vzComp.(verrazzanoComponent).GetCertificateNames(ctx) {
 		time := metav1.Now()
-		client.Create(context.TODO(), &certv1.Certificate{
+		_ = c.Create(context.TODO(), &certv1.Certificate{
 			ObjectMeta: metav1.ObjectMeta{Name: certName.Name, Namespace: certName.Namespace},
 			Status: certv1.CertificateStatus{
 				Conditions: []certv1.CertificateCondition{
@@ -149,8 +148,8 @@ func TestPostInstall(t *testing.T) {
 //  WHEN I call PostInstall and the certificates aren't ready
 //  THEN a retryable error is returned
 func TestPostInstallCertsNotReady(t *testing.T) {
-	client := fake.NewFakeClientWithScheme(testScheme)
-	ctx := spi.NewFakeContext(client, &vzapi.Verrazzano{
+	c := fake.NewClientBuilder().WithScheme(testScheme).Build()
+	ctx := spi.NewFakeContext(c, &vzapi.Verrazzano{
 		Spec: vzapi.VerrazzanoSpec{
 			Components: dnsComponents,
 		},
@@ -165,13 +164,13 @@ func TestPostInstallCertsNotReady(t *testing.T) {
 	// when all the ingresses are present in the cluster
 	vzIngressNames := vzComp.(verrazzanoComponent).GetIngressNames(ctx)
 	for _, ingressName := range vzIngressNames {
-		client.Create(context.TODO(), &v1.Ingress{
+		_ = c.Create(context.TODO(), &v1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: ingressName.Name, Namespace: ingressName.Namespace},
 		})
 	}
 	for _, certName := range vzComp.(verrazzanoComponent).GetCertificateNames(ctx) {
 		time := metav1.Now()
-		client.Create(context.TODO(), &certv1.Certificate{
+		_ = c.Create(context.TODO(), &certv1.Certificate{
 			ObjectMeta: metav1.ObjectMeta{Name: certName.Name, Namespace: certName.Namespace},
 			Status: certv1.CertificateStatus{
 				Conditions: []certv1.CertificateCondition{
@@ -210,8 +209,8 @@ func TestGetCertificateNames(t *testing.T) {
 			},
 		},
 	}
-	client := fake.NewFakeClientWithScheme(testScheme)
-	ctx := spi.NewFakeContext(client, &vz, false)
+	c := fake.NewClientBuilder().WithScheme(testScheme).Build()
+	ctx := spi.NewFakeContext(c, &vz, false)
 	vzComp := NewComponent()
 
 	certNames := vzComp.GetCertificateNames(ctx)
@@ -232,8 +231,8 @@ func TestGetCertificateNames(t *testing.T) {
 //  WHEN I call Upgrade
 //  THEN no error is returned
 func TestUpgrade(t *testing.T) {
-	client := fake.NewFakeClientWithScheme(testScheme)
-	ctx := spi.NewFakeContext(client, &vzapi.Verrazzano{
+	c := fake.NewClientBuilder().WithScheme(testScheme).Build()
+	ctx := spi.NewFakeContext(c, &vzapi.Verrazzano{
 		Spec: vzapi.VerrazzanoSpec{
 			Version:    "v1.2.0",
 			Components: dnsComponents,
@@ -258,8 +257,8 @@ func TestUpgrade(t *testing.T) {
 //  WHEN I call PostUpgrade
 //  THEN no error is returned
 func TestPostUpgrade(t *testing.T) {
-	client := fake.NewFakeClientWithScheme(testScheme)
-	ctx := spi.NewFakeContext(client, &vzapi.Verrazzano{
+	c := fake.NewClientBuilder().WithScheme(testScheme).Build()
+	ctx := spi.NewFakeContext(c, &vzapi.Verrazzano{
 		Spec: vzapi.VerrazzanoSpec{
 			Version:    "v1.2.0",
 			Components: dnsComponents,
@@ -270,11 +269,11 @@ func TestPostUpgrade(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func createPreInstallTestClient(extraObjs ...runtime.Object) client.Client {
-	objs := []runtime.Object{}
+func createPreInstallTestClient(extraObjs ...client.Object) client.Client {
+	objs := []client.Object{}
 	objs = append(objs, extraObjs...)
-	client := fake.NewFakeClientWithScheme(testScheme, objs...)
-	return client
+	c := fake.NewClientBuilder().WithScheme(testScheme).WithObjects(objs...).Build()
+	return c
 }
 
 // TestIsEnabledNilVerrazzano tests the IsEnabled function
@@ -366,6 +365,20 @@ func Test_verrazzanoComponent_ValidateUpdate(t *testing.T) {
 				},
 			},
 			wantErr: true,
+		},
+		{
+			name: "change-installargs",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Verrazzano: &vzapi.VerrazzanoComponent{
+							InstallArgs: []vzapi.InstallArgs{{Name: "foo", Value: "bar"}},
+						},
+					},
+				},
+			},
+			wantErr: false,
 		},
 		{
 			name:    "no change",
@@ -483,6 +496,165 @@ func Test_verrazzanoComponent_ValidateUpdate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "disable-opensearch",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Elasticsearch: &vzapi.ElasticsearchComponent{MonitoringComponent: vzapi.MonitoringComponent{Enabled: &disabled}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "disable-console",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Console: &vzapi.ConsoleComponent{MonitoringComponent: vzapi.MonitoringComponent{Enabled: &disabled}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			// Change to OS installargs allowed, persistence changes are supported
+			name: "change-os-installargs",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Elasticsearch: &vzapi.ElasticsearchComponent{
+							ESInstallArgs: []vzapi.InstallArgs{{Name: "foo", Value: "bar"}},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "disable-grafana",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Grafana: &vzapi.GrafanaComponent{MonitoringComponent: vzapi.MonitoringComponent{Enabled: &disabled}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "disable-prometheus",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Prometheus: &vzapi.PrometheusComponent{MonitoringComponent: vzapi.MonitoringComponent{Enabled: &disabled}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "disable-osd",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Kibana: &vzapi.KibanaComponent{MonitoringComponent: vzapi.MonitoringComponent{Enabled: &disabled}},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "disable-fluentd",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Fluentd: &vzapi.FluentdComponent{Enabled: &disabled},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "change-fluentd-oci",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Fluentd: &vzapi.FluentdComponent{
+							OCI: &vzapi.OciLoggingConfiguration{
+								APISecret: "secret",
+							},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "change-fluentd-es-secret",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Fluentd: &vzapi.FluentdComponent{
+							ElasticsearchSecret: "secret",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "change-fluentd-es-url",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Fluentd: &vzapi.FluentdComponent{
+							ElasticsearchURL: "url",
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "change-fluentd-extravolume",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Fluentd: &vzapi.FluentdComponent{
+							ExtraVolumeMounts: []vzapi.VolumeMount{{Source: "foo"}},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid-fluentd-extravolume",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Fluentd: &vzapi.FluentdComponent{
+							ExtraVolumeMounts: []vzapi.VolumeMount{{Source: "/root/.oci"}},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -490,6 +662,51 @@ func Test_verrazzanoComponent_ValidateUpdate(t *testing.T) {
 			err := c.ValidateUpdate(tt.old, tt.new)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateUpdate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateFluentd(t *testing.T) {
+	varlog := "/var/log"
+	homevar := "/home/var_log"
+	tests := []struct {
+		name    string
+		vz      *vzapi.Verrazzano
+		wantErr bool
+	}{{
+		name:    "default",
+		vz:      &vzapi.Verrazzano{},
+		wantErr: false,
+	}, {
+		name: varlog,
+		vz: &vzapi.Verrazzano{
+			Spec: vzapi.VerrazzanoSpec{
+				Components: vzapi.ComponentSpec{
+					Fluentd: &vzapi.FluentdComponent{
+						ExtraVolumeMounts: []vzapi.VolumeMount{{Source: varlog}},
+					},
+				},
+			},
+		},
+		wantErr: true,
+	}, {
+		name: homevar,
+		vz: &vzapi.Verrazzano{
+			Spec: vzapi.VerrazzanoSpec{
+				Components: vzapi.ComponentSpec{
+					Fluentd: &vzapi.FluentdComponent{
+						ExtraVolumeMounts: []vzapi.VolumeMount{{Source: varlog, Destination: homevar}},
+					},
+				},
+			},
+		},
+		wantErr: false,
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateFluentd(tt.vz); (err != nil) != tt.wantErr {
+				t.Errorf("validateFluentd() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

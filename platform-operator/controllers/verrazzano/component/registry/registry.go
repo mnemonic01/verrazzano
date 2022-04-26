@@ -15,9 +15,15 @@ import (
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/mysql"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/nginx"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/oam"
+	promadapter "github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/prometheus/adapter"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/prometheus/kubestatemetrics"
+	promnodeexporter "github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/prometheus/nodeexporter"
+	promoperator "github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/prometheus/operator"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/prometheus/pushgateway"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/rancher"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/verrazzano"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/vmo"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/weblogic"
 )
 
@@ -49,19 +55,25 @@ func getComponents() []spi.Component {
 	if len(componentsRegistry) == 0 {
 		componentsRegistry = []spi.Component{
 			oam.NewComponent(),
-			weblogic.NewComponent(),
 			appoper.NewComponent(),
 			istio.NewComponent(),
+			weblogic.NewComponent(),
 			nginx.NewComponent(),
 			certmanager.NewComponent(),
 			externaldns.NewComponent(),
 			rancher.NewComponent(),
+			vmo.NewComponent(),
 			verrazzano.NewComponent(),
 			authproxy.NewComponent(),
 			coherence.NewComponent(),
 			mysql.NewComponent(),
 			keycloak.NewComponent(),
 			kiali.NewComponent(),
+			promoperator.NewComponent(),
+			promadapter.NewComponent(),
+			kubestatemetrics.NewComponent(),
+			pushgateway.NewComponent(),
+			promnodeexporter.NewComponent(),
 		}
 	}
 	return componentsRegistry

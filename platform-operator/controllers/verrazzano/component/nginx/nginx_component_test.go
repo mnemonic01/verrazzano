@@ -6,6 +6,8 @@ package nginx
 import (
 	"testing"
 
+	v1 "k8s.io/api/core/v1"
+
 	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 )
 
@@ -44,6 +46,70 @@ func Test_nginxComponent_ValidateUpdate(t *testing.T) {
 				},
 			},
 			wantErr: true,
+		},
+		{
+			name: "change-type-to-nodeport",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Ingress: &vzapi.IngressNginxComponent{
+							Type: vzapi.NodePort,
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "change-type-from-nodeport",
+			old: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Ingress: &vzapi.IngressNginxComponent{
+							Type: vzapi.NodePort,
+						},
+					},
+				},
+			},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Ingress: &vzapi.IngressNginxComponent{
+							Type: vzapi.LoadBalancer,
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "change-install-args",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Ingress: &vzapi.IngressNginxComponent{
+							NGINXInstallArgs: []vzapi.InstallArgs{{Name: "foo", Value: "bar"}},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "change-ports",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Ingress: &vzapi.IngressNginxComponent{
+							Ports: []v1.ServicePort{{Name: "https2", NodePort: 30057}},
+						},
+					},
+				},
+			},
+			wantErr: false,
 		},
 		{
 			name:    "no change",

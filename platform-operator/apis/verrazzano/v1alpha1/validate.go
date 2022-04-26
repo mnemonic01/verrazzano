@@ -43,6 +43,8 @@ const (
 	InstancePrincipalDelegationToken authenticationType = "instance_principle_delegation_token"
 	// UnknownAuthenticationType is used for none meaningful auth type
 	UnknownAuthenticationType authenticationType = "unknown_auth_type"
+	// ValidateInProgress error message
+	ValidateInProgressError = "Updates to resource not allowed while uninstall or upgrade is in progress"
 
 	ociDNSSecretFileName            = "oci.yaml"
 	fluentdOCISecretConfigEntry     = "config"
@@ -193,19 +195,10 @@ func ValidateActiveInstall(client client.Client) error {
 
 // ValidateInProgress makes sure there is not an install, uninstall or upgrade in progress
 func ValidateInProgress(old *Verrazzano, new *Verrazzano) error {
-	if old.Status.State == "" || old.Status.State == VzStateReady || old.Status.State == VzStateFailed {
+	if old.Status.State == "" || old.Status.State == VzStateReady || old.Status.State == VzStateFailed || old.Status.State == VzStatePaused || old.Status.State == VzStateInstalling {
 		return nil
 	}
-	// Allow enable component during install
-	if old.Status.State == VzStateInstalling {
-		if isCoherenceEnabled(new.Spec.Components.CoherenceOperator) && !isCoherenceEnabled(old.Spec.Components.CoherenceOperator) {
-			return nil
-		}
-		if isWebLogicEnabled(new.Spec.Components.WebLogicOperator) && !isWebLogicEnabled(old.Spec.Components.WebLogicOperator) {
-			return nil
-		}
-	}
-	return fmt.Errorf("Updates to resource not allowed while install, uninstall or upgrade is in progress")
+	return fmt.Errorf(ValidateInProgressError)
 }
 
 // validateOCISecrets - Validate that the OCI DNS and Fluentd OCI secrets required by install exists, if configured
@@ -379,22 +372,6 @@ func validateSecretContents(secretName string, bytes []byte, target interface{})
 	return nil
 }
 
-// isCoherenceEnabled returns true if the component is enabled, which is the default
-func isCoherenceEnabled(comp *CoherenceOperatorComponent) bool {
-	if comp == nil || comp.Enabled == nil {
-		return true
-	}
-	return *comp.Enabled
-}
-
-// isWebLogicEnabled returns true if the component is enabled, which is the default
-func isWebLogicEnabled(comp *WebLogicOperatorComponent) bool {
-	if comp == nil || comp.Enabled == nil {
-		return true
-	}
-	return *comp.Enabled
-}
-
 //ValidateVersionHigherOrEqual checks that currentVersion matches requestedVersion or is a higher version
 func ValidateVersionHigherOrEqual(currentVersion string, requestedVersion string) bool {
 	log := zap.S().With("validate", "version")
@@ -423,4 +400,25 @@ func ValidateVersionHigherOrEqual(currentVersion string, requestedVersion string
 
 	return currentSemVer.IsEqualTo(requestedSemVer) || currentSemVer.IsGreatherThan(requestedSemVer)
 
+}
+
+// ValidateHelmValueOverrides checks that the overrides slice has only one override type per slice item
+func ValidateHelmValueOverrides(Overrides []Overrides) error {
+	overridePerItem := 0
+	for _, override := range Overrides {
+		if override.ConfigMapRef != nil {
+			overridePerItem++
+		}
+		if override.SecretRef != nil {
+			overridePerItem++
+		}
+		if overridePerItem > 1 {
+			return fmt.Errorf("Invalid Helm overrides. Cannot specify more than one override type in the same list element")
+		}
+		if overridePerItem == 0 {
+			return fmt.Errorf("Invalid Helm overrides. No override specified")
+		}
+		overridePerItem = 0
+	}
+	return nil
 }

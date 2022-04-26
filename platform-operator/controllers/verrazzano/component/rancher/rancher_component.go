@@ -10,14 +10,13 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/certmanager"
-	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/nginx"
-
 	"github.com/verrazzano/verrazzano/pkg/bom"
 	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 	"github.com/verrazzano/verrazzano/platform-operator/constants"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/certmanager"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/common"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/helm"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/nginx"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/secret"
 	"github.com/verrazzano/verrazzano/platform-operator/internal/config"
@@ -158,15 +157,17 @@ func (r rancherComponent) IsEnabled(effectiveCR *vzapi.Verrazzano) bool {
 
 // ValidateUpdate checks if the specified new Verrazzano CR is valid for this component to be updated
 func (r rancherComponent) ValidateUpdate(old *vzapi.Verrazzano, new *vzapi.Verrazzano) error {
+	// Block all changes for now, particularly around storage changes
 	if r.IsEnabled(old) && !r.IsEnabled(new) {
-		return fmt.Errorf("can not disable previously enabled %s", ComponentJSONName)
+		return fmt.Errorf("Disabling component %s is not allowed", ComponentJSONName)
 	}
 	return nil
 }
 
 // PreInstall
 /* Sets up the environment for Rancher
-- Create the Rancher namespaces if they are not present (cattle-namespace, rancher-operator-namespace)
+- Create the Rancher namespace if it is not present (cattle-namespace)
+- note: VZ-5241 the rancher-operator-namespace is no longer used in 2.6.3
 - Copy TLS certificates for Rancher if using the default Verrazzano CA
 - Create additional LetsEncrypt TLS certificates for Rancher if using LE
 */
@@ -174,9 +175,6 @@ func (r rancherComponent) PreInstall(ctx spi.ComponentContext) error {
 	vz := ctx.EffectiveCR()
 	c := ctx.Client()
 	log := ctx.Log()
-	if err := createRancherOperatorNamespace(log, c); err != nil {
-		return err
-	}
 	if err := createCattleSystemNamespace(log, c); err != nil {
 		return err
 	}
@@ -258,6 +256,10 @@ func (r rancherComponent) PostInstall(ctx spi.ComponentContext) error {
 
 	if err := rest.PutServerURL(); err != nil {
 		ctx.Log().Error(err)
+		return err
+	}
+
+	if err := removeBootstrapSecretIfExists(log, c); err != nil {
 		return err
 	}
 

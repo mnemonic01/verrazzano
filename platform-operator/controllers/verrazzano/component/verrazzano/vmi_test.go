@@ -10,6 +10,8 @@ import (
 	globalconst "github.com/verrazzano/verrazzano/pkg/constants"
 	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"testing"
@@ -126,13 +128,25 @@ func TestOpenSearchInvalidArgs(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestNewOpenSearchWithExistingVMI(t *testing.T) {
+// TestNewOpenSearchValuesAreCopied tests that VMI and policy values are copied over to the new opensearch
+// GIVEN a Verrazzano CR and an existing VMI
+//  WHEN I create a new OpenSearch resource
+//  THEN the storage options from the existing VMi are preserved, and any policy values are copied.
+func TestNewOpenSearchValuesAreCopied(t *testing.T) {
+	age := "1d"
 	r := &resourceRequestValues{}
 	testvz := &vzapi.Verrazzano{
 		Spec: vzapi.VerrazzanoSpec{
 			Components: vzapi.ComponentSpec{
 				Elasticsearch: &vzapi.ElasticsearchComponent{
 					ESInstallArgs: []vzapi.InstallArgs{},
+					Policies: []vmov1.IndexManagementPolicy{
+						{
+							PolicyName:   "my-policy",
+							IndexPattern: "pattern",
+							MinIndexAge:  &age,
+						},
+					},
 				},
 			},
 		},
@@ -150,6 +164,7 @@ func TestNewOpenSearchWithExistingVMI(t *testing.T) {
 	openSearch, err := newOpenSearch(testvz, r, testvmi, false, false)
 	assert.NoError(t, err)
 	assert.Equal(t, "1Gi", openSearch.MasterNode.Storage.Size)
+	assert.EqualValues(t, testvz.Spec.Components.Elasticsearch.Policies, openSearch.Policies)
 }
 
 // TestNewGrafanaWithExistingVMI tests that storage values in the VMI are not erased when a new Grafana is created
@@ -200,7 +215,7 @@ func TestPrometheusWithStorageOverride(t *testing.T) {
 // WHEN I create a new VMI resource
 //  THEN the configuration in the CR is respected
 func TestCreateVMI(t *testing.T) {
-	ctx := spi.NewFakeContext(fake.NewFakeClientWithScheme(testScheme), &vmiEnabledCR, false)
+	ctx := spi.NewFakeContext(fake.NewClientBuilder().WithScheme(testScheme).Build(), &vmiEnabledCR, false)
 	err := createVMI(ctx)
 	assert.NoError(t, err)
 	vmi := &vmov1.VerrazzanoMonitoringInstance{}
@@ -253,4 +268,108 @@ func TestHasDataNodeStorageOverride(t *testing.T) {
 			assert.Equal(t, tt.hasOverride, hasNodeStorageOverride(tt.cr, "nodes.data.requests.storage"))
 		})
 	}
+}
+
+// TestBackupSecret tests whether ensureBackupSecret are created
+// GIVEN a kubernetes client
+func TestBackupSecret(t *testing.T) {
+	client := createPreInstallTestClient()
+	err := ensureBackupSecret(client)
+	assert.Nil(t, err)
+}
+
+// TestSetupSharedVmiResources tests whether secrets resources are created
+// GIVEN a controller run-time context
+func TestSetupSharedVmiResources(t *testing.T) {
+	client := createPreInstallTestClient()
+	ctx := spi.NewFakeContext(client, &vzapi.Verrazzano{}, false)
+	err := setupSharedVMIResources(ctx)
+	assert.Nil(t, err)
+}
+
+func TestNodeAdapter(t *testing.T) {
+	vmiStorage := "50Gi"
+	vmi := &vmov1.VerrazzanoMonitoringInstance{
+		Spec: vmov1.VerrazzanoMonitoringInstanceSpec{
+			Elasticsearch: vmov1.Elasticsearch{
+				Enabled: true,
+				Nodes: []vmov1.ElasticsearchNode{
+					{
+						Name:     "a",
+						Replicas: 3,
+						Storage: &vmov1.Storage{
+							Size: vmiStorage,
+						},
+						Roles: []vmov1.NodeRole{
+							vmov1.MasterRole,
+						},
+						Resources: vmov1.Resources{
+							RequestMemory: "48Mi",
+						},
+					},
+					{
+						Name:     "b",
+						Replicas: 2,
+						Storage: &vmov1.Storage{
+							Size: "100Gi",
+							PvcNames: []string{
+								"1", "2",
+							},
+						},
+						Roles: []vmov1.NodeRole{
+							vmov1.DataRole,
+							vmov1.IngestRole,
+						},
+						Resources: vmov1.Resources{
+							RequestMemory: "48Mi",
+						},
+					},
+				},
+			},
+		},
+	}
+	nodes := []vzapi.OpenSearchNode{
+		{
+			Name:     "a",
+			Replicas: 3,
+			Roles: []vmov1.NodeRole{
+				vmov1.MasterRole,
+			},
+			Resources: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					"memory": resource.MustParse("48Mi"),
+				},
+			},
+		},
+		{
+			Name:     "b",
+			Replicas: 2,
+			Roles: []vmov1.NodeRole{
+				vmov1.DataRole,
+				vmov1.IngestRole,
+			},
+			Resources: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					"memory": resource.MustParse("48Mi"),
+				},
+			},
+			Storage: &vzapi.OpenSearchNodeStorage{
+				Size: "100Gi",
+			},
+		},
+	}
+
+	adaptedNodes := nodeAdapter(vmi, nodes, &resourceRequestValues{Storage: vmiStorage})
+	compareNodes := func(n1, n2 *vmov1.ElasticsearchNode) {
+		assert.Equal(t, n1.Name, n2.Name)
+		assert.Equal(t, n1.Replicas, n2.Replicas)
+		assert.EqualValues(t, n1.Roles, n2.Roles)
+		if n1.Storage != nil {
+			assert.NotNil(t, n2.Storage)
+			assert.Equal(t, n1.Storage.Size, n2.Storage.Size)
+		}
+		assert.Equal(t, n1.Resources.RequestMemory, n2.Resources.RequestMemory)
+	}
+	compareNodes(&vmi.Spec.Elasticsearch.Nodes[0], &adaptedNodes[0])
+	compareNodes(&vmi.Spec.Elasticsearch.Nodes[1], &adaptedNodes[1])
 }

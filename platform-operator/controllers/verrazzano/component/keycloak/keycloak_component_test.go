@@ -4,8 +4,9 @@
 package keycloak
 
 import (
-	"k8s.io/apimachinery/pkg/types"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/stretchr/testify/assert"
 	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
@@ -67,7 +68,7 @@ func TestIsEnabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := spi.NewFakeContext(fake.NewFakeClientWithScheme(k8scheme.Scheme), tt.vz, false)
+			ctx := spi.NewFakeContext(fake.NewClientBuilder().WithScheme(k8scheme.Scheme).Build(), tt.vz, false)
 			assert.Equal(t, tt.isEnabled, kcComponent.IsEnabled(ctx.EffectiveCR()))
 		})
 	}
@@ -105,17 +106,17 @@ func TestPreinstall(t *testing.T) {
 	}{
 		{
 			"should fail when verrazzano secret is not present",
-			fake.NewFakeClientWithScheme(k8scheme.Scheme, mysqlSecret),
+			fake.NewClientBuilder().WithScheme(k8scheme.Scheme).WithObjects(mysqlSecret).Build(),
 			true,
 		},
 		{
 			"should fail when mysql secret is not present",
-			fake.NewFakeClientWithScheme(k8scheme.Scheme, vzSecret),
+			fake.NewClientBuilder().WithScheme(k8scheme.Scheme).WithObjects(vzSecret).Build(),
 			true,
 		},
 		{
 			"should pass when both secrets are present",
-			fake.NewFakeClientWithScheme(k8scheme.Scheme, vzSecret, mysqlSecret),
+			fake.NewClientBuilder().WithScheme(k8scheme.Scheme).WithObjects(vzSecret, mysqlSecret).Build(),
 			false,
 		},
 	}
@@ -174,6 +175,20 @@ func TestKeycloakComponent_ValidateUpdate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "disable",
+			old:  &vzapi.Verrazzano{},
+			new: &vzapi.Verrazzano{
+				Spec: vzapi.VerrazzanoSpec{
+					Components: vzapi.ComponentSpec{
+						Keycloak: &vzapi.KeycloakComponent{
+							KeycloakInstallArgs: []vzapi.InstallArgs{{Name: "foo", Value: "bar"}},
+						},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name:    "no change",
 			old:     &vzapi.Verrazzano{},
 			new:     &vzapi.Verrazzano{},
@@ -207,9 +222,9 @@ func TestKeycloakComponent_GetCertificateNames(t *testing.T) {
 		},
 	}
 
-	client := fake.NewFakeClientWithScheme(k8scheme.Scheme)
-	ctx := spi.NewFakeContext(client, vz, false)
+	c := fake.NewClientBuilder().WithScheme(k8scheme.Scheme).Build()
+	ctx := spi.NewFakeContext(c, vz, false)
 	names := NewComponent().GetCertificateNames(ctx)
 	assert.Len(t, names, 1)
-	assert.Equal(t, types.NamespacedName{Name: "myenv-secret", Namespace: ComponentNamespace}, names[0])
+	assert.Equal(t, types.NamespacedName{Name: keycloakCertificateName, Namespace: ComponentNamespace}, names[0])
 }

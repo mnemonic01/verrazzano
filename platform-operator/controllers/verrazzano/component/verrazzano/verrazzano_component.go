@@ -5,18 +5,21 @@ package verrazzano
 
 import (
 	"fmt"
-	"path/filepath"
-
 	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 	"github.com/verrazzano/verrazzano/platform-operator/constants"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/authproxy"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/certmanager"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/common"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/helm"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/istio"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/nginx"
 	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/spi"
+	"github.com/verrazzano/verrazzano/platform-operator/controllers/verrazzano/component/vmo"
 	"github.com/verrazzano/verrazzano/platform-operator/internal/config"
 	"github.com/verrazzano/verrazzano/platform-operator/internal/vzconfig"
 	"k8s.io/apimachinery/pkg/types"
+	"path/filepath"
+	"reflect"
 )
 
 const (
@@ -30,10 +33,18 @@ const (
 	vzImagePullSecretKeyName = "global.imagePullSecrets[0]"
 
 	// Certificate names
+	verrazzanoCertificateName = "verrazzano-tls"
 	osCertificateName         = "system-tls-es-ingest"
 	grafanaCertificateName    = "system-tls-grafana"
 	osdCertificateName        = "system-tls-kibana"
 	prometheusCertificateName = "system-tls-prometheus"
+
+	verrazzanoBackupScrtName   = "verrazzano-backup"
+	objectstoreAccessKey       = "object_store_access_key"
+	objectstoreAccessSecretKey = "object_store_secret_key"
+
+	// Grafana admin secret data
+	grafanaScrtName = "grafana-admin"
 )
 
 // ComponentJSONName is the josn name of the verrazzano component in CRD
@@ -55,7 +66,7 @@ func NewComponent() spi.Component {
 			AppendOverridesFunc:     appendVerrazzanoOverrides,
 			ImagePullSecretKeyname:  vzImagePullSecretKeyName,
 			SupportsOperatorInstall: true,
-			Dependencies:            []string{istio.ComponentName, nginx.ComponentName, certmanager.ComponentName},
+			Dependencies:            []string{istio.ComponentName, nginx.ComponentName, certmanager.ComponentName, authproxy.ComponentName},
 		},
 	}
 }
@@ -86,6 +97,14 @@ func (c verrazzanoComponent) Install(ctx spi.ComponentContext) error {
 
 // PreUpgrade Verrazzano component pre-upgrade processing
 func (c verrazzanoComponent) PreUpgrade(ctx spi.ComponentContext) error {
+	if vzconfig.IsVMOEnabled(ctx.EffectiveCR()) {
+		if err := vmo.ExportVMOHelmChart(ctx); err != nil {
+			return err
+		}
+		if err := common.ApplyCRDYaml(ctx, config.GetHelmVmoChartsDir()); err != nil {
+			return err
+		}
+	}
 	return verrazzanoPreUpgrade(ctx, ComponentNamespace)
 }
 
@@ -117,6 +136,8 @@ func (c verrazzanoComponent) PostInstall(ctx spi.ComponentContext) error {
 // PostUpgrade Verrazzano-post-upgrade processing
 func (c verrazzanoComponent) PostUpgrade(ctx spi.ComponentContext) error {
 	ctx.Log().Debugf("Verrazzano component post-upgrade")
+	c.HelmComponent.IngressNames = c.GetIngressNames(ctx)
+	c.HelmComponent.Certificates = c.GetCertificateNames(ctx)
 	if err := c.HelmComponent.PostUpgrade(ctx); err != nil {
 		return err
 	}
@@ -143,9 +164,30 @@ func (c verrazzanoComponent) IsEnabled(effectiveCR *vzapi.Verrazzano) bool {
 
 // ValidateUpdate checks if the specified new Verrazzano CR is valid for this component to be updated
 func (c verrazzanoComponent) ValidateUpdate(old *vzapi.Verrazzano, new *vzapi.Verrazzano) error {
-	if c.IsEnabled(old) && !c.IsEnabled(new) {
-		return fmt.Errorf("can not disable previously enabled %s", ComponentJSONName)
+	// Do not allow disabling active components
+	if err := c.checkEnabled(old, new); err != nil {
+		return err
 	}
+	// Reject any other edits except InstallArgs
+	// Do not allow any updates to storage settings via the volumeClaimSpecTemplates/defaultVolumeSource
+	if err := compareStorageOverrides(old, new); err != nil {
+		return err
+	}
+	if err := validateFluentd(new); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateInstall checks if the specified Verrazzano CR is valid for this component to be installed
+func (c verrazzanoComponent) ValidateInstall(vz *vzapi.Verrazzano) error {
+	if err := validateFluentd(vz); err != nil {
+		return err
+	}
+	return nil
+}
+
+func compareStorageOverrides(old *vzapi.Verrazzano, new *vzapi.Verrazzano) error {
 	// compare the storage overrides and reject if the type or size is different
 	oldSetting, err := findStorageOverride(old)
 	if err != nil {
@@ -155,13 +197,54 @@ func (c verrazzanoComponent) ValidateUpdate(old *vzapi.Verrazzano, new *vzapi.Ve
 	if err != nil {
 		return err
 	}
-	if oldSetting == nil && newSetting != nil || oldSetting != nil && newSetting == nil {
-		return fmt.Errorf("can not change default volume")
+	if !reflect.DeepEqual(oldSetting, newSetting) {
+		return fmt.Errorf("Can not change volume settings for %s", ComponentJSONName)
 	}
-	if oldSetting != nil && newSetting != nil {
-		if oldSetting.Storage != newSetting.Storage {
-			return fmt.Errorf("can not change default volume size")
+	return nil
+}
+
+// existing Fluentd mount paths can be found at platform-operator/helm_config/charts/verrazzano/templates/verrazzano-logging.yaml
+var existingFluentdMountPaths = [7]string{
+	"/fluentd/cacerts", "/fluentd/secret", "/fluentd/etc",
+	"/root/.oci", "/var/log", "/var/lib", "/run/log/journal"}
+
+func validateFluentd(vz *vzapi.Verrazzano) error {
+	fluentd := vz.Spec.Components.Fluentd
+	if fluentd != nil && len(fluentd.ExtraVolumeMounts) > 0 {
+		for _, vm := range fluentd.ExtraVolumeMounts {
+			mountPath := vm.Source
+			if vm.Destination != "" {
+				mountPath = vm.Destination
+			}
+			for _, existing := range existingFluentdMountPaths {
+				if mountPath == existing {
+					return fmt.Errorf("duplicate mount path found: %s; Fluentd by default has mount paths: %v", mountPath, existingFluentdMountPaths)
+				}
+			}
 		}
+	}
+	return nil
+}
+
+func (c verrazzanoComponent) checkEnabled(old *vzapi.Verrazzano, new *vzapi.Verrazzano) error {
+	// Do not allow disabling of any component post-install for now
+	if c.IsEnabled(old) && !c.IsEnabled(new) {
+		return fmt.Errorf("Disabling component %s is not allowed", ComponentJSONName)
+	}
+	if vzconfig.IsConsoleEnabled(old) && !vzconfig.IsConsoleEnabled(new) {
+		return fmt.Errorf("Disabling component console not allowed")
+	}
+	if vzconfig.IsElasticsearchEnabled(old) && !vzconfig.IsElasticsearchEnabled(new) {
+		return fmt.Errorf("Disabling component elasticsearch not allowed")
+	}
+	if vzconfig.IsGrafanaEnabled(old) && !vzconfig.IsGrafanaEnabled(new) {
+		return fmt.Errorf("Disabling component grafana not allowed")
+	}
+	if vzconfig.IsPrometheusEnabled(old) && !vzconfig.IsPrometheusEnabled(new) {
+		return fmt.Errorf("Disabling component prometheus not allowed")
+	}
+	if vzconfig.IsKibanaEnabled(old) && !vzconfig.IsKibanaEnabled(new) {
+		return fmt.Errorf("Disabling component kibana not allowed")
 	}
 	return nil
 }
@@ -207,7 +290,7 @@ func (c verrazzanoComponent) GetCertificateNames(ctx spi.ComponentContext) []typ
 
 	certificateNames = append(certificateNames, types.NamespacedName{
 		Namespace: ComponentNamespace,
-		Name:      fmt.Sprintf("%s-secret", ctx.EffectiveCR().Spec.EnvironmentName),
+		Name:      verrazzanoCertificateName,
 	})
 
 	if vzconfig.IsElasticsearchEnabled(ctx.EffectiveCR()) {
