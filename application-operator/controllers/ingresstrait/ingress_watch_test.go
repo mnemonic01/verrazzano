@@ -54,8 +54,8 @@ func Test_createIngressTraitReconcileRequests(t *testing.T) {
 	asserts.Equal(expectedRequests, actualRequests)
 }
 
-// TestReconciler_shouldUpdateIngressTraits tests the isConsoleIngressUpdated func for the following use case.
-// GIVEN a request to isConsoleIngressUpdated
+// TestReconciler_shouldUpdateIngressTraits tests the isIstioIngressGatewayUpdated func for the following use case.
+// GIVEN a request to isIstioIngressGatewayUpdated
 // WHEN the only the Verrazzano Console ingress has changed
 // THEN true is returned only when the TLS fields differ, false otherwise
 func TestReconciler_shouldUpdateIngressTraits(t *testing.T) {
@@ -243,11 +243,11 @@ func TestReconciler_shouldUpdateIngressTraits(t *testing.T) {
 			client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 			r := newIngressTraitReconciler(client)
-			if got := r.shouldUpdateIngressTraits(event.UpdateEvent{
+			if got := r.isVerrazzanoUpdated(event.UpdateEvent{
 				ObjectOld: tt.old,
 				ObjectNew: tt.new,
 			}); got != tt.want {
-				t.Errorf("shouldUpdateIngressTraits() = %v, want %v", got, tt.want)
+				t.Errorf("isVerrazzanoUpdated() = %v, want %v", got, tt.want)
 			}
 		})
 	}

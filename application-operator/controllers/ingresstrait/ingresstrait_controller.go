@@ -676,6 +676,24 @@ func (r *Reconciler) mutateDestinationRule(destinationRule *istioclient.Destinat
 
 // setupWatches Sets up watches for the IngressTrait controller
 func (r *Reconciler) setupWatches() error {
+	// Set up a watch on the istio-ingressgateway service to watch for changes in the address;
+	err := r.Controller.Watch(
+		&source.Kind{Type: &corev1.Service{}},
+		// The handler for the Watch is a map function to map the detected change into requests to reconcile any
+		// existing ingress traits and invoke the IngressTrait Reconciler; this should cause us to update the
+		// VS and GW records for the associated apps.
+		handler.EnqueueRequestsFromMapFunc(func(a client.Object) []reconcile.Request {
+			return r.createIngressTraitReconcileRequests()
+		}),
+		predicate.Funcs{
+			UpdateFunc: func(updateEvent event.UpdateEvent) bool {
+				return r.isIstioIngressGatewayUpdated(updateEvent)
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
 	// Set up a watch on the Verrazzano for changes in the IstioIngressSection/DNSComponent/EnvironmentName
 	return r.Controller.Watch(
 		&source.Kind{Type: &v1alpha1.Verrazzano{}},
@@ -687,15 +705,28 @@ func (r *Reconciler) setupWatches() error {
 		}),
 		predicate.Funcs{
 			UpdateFunc: func(updateEvent event.UpdateEvent) bool {
-				return r.shouldUpdateIngressTraits(updateEvent)
+				return r.isVerrazzanoUpdated(updateEvent)
 			},
 		},
 	)
 }
 
-// shouldUpdateIngressTraits Predicate func used by the Ingress watcher, returns true if the IstioIngressSection/DNSComponent/EnvironmentName have changed;
-// - this is largely to attempt to scope the change detection to Host name changes
-func (r *Reconciler) shouldUpdateIngressTraits(updateEvent event.UpdateEvent) bool {
+// isIstioIngressGatewayUpdated Predicate func used by the watcher
+func (r *Reconciler) isIstioIngressGatewayUpdated(updateEvent event.UpdateEvent) bool {
+	oldSvc := updateEvent.ObjectOld.(*corev1.Service)
+	if oldSvc.Namespace != vzconst.IstioSystemNamespace || oldSvc.Name != "istio-ingressgateway" {
+		return false
+	}
+	newSvc := updateEvent.ObjectNew.(*corev1.Service)
+	if !reflect.DeepEqual(oldSvc.Spec, newSvc.Spec) {
+		r.Log.Infof("Service %s/%s has changed", oldSvc.Namespace, oldSvc.Name)
+		return true
+	}
+	return false
+}
+
+// isVerrazzanoUpdated Predicate func used by the Ingress watcher, returns true if the IstioIngressSection/DNSComponent/EnvironmentName have changed;
+func (r *Reconciler) isVerrazzanoUpdated(updateEvent event.UpdateEvent) bool {
 	oldVZ := updateEvent.ObjectOld.(*v1alpha1.Verrazzano)
 	newVZ := updateEvent.ObjectNew.(*v1alpha1.Verrazzano)
 	if !reflect.DeepEqual(getIstioIngressSettings(oldVZ), getIstioIngressSettings(newVZ)) {
