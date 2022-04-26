@@ -38,7 +38,6 @@ import (
 	istioclient "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	k8net "k8s.io/api/networking/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -70,6 +69,7 @@ const (
 	destinationRuleKind       = "DestinationRule"
 	controllerName            = "ingresstrait"
 	httpsProtocol             = "HTTPS"
+	defaultWildcardDomain     = "nip.io"
 )
 
 // The port names used by WebLogic operator that do not have http prefix.
@@ -697,7 +697,6 @@ func (r *Reconciler) setupWatches() error {
 // - this is largely to attempt to scope the change detection to Host name changes
 func (r *Reconciler) shouldUpdateIngressTraits(updateEvent event.UpdateEvent) bool {
 	oldVZ := updateEvent.ObjectOld.(*v1alpha1.Verrazzano)
-	r.Log.Infof("Checking Verrazzano resource %s/%s", oldVZ.Namespace, oldVZ.Name)
 	newVZ := updateEvent.ObjectNew.(*v1alpha1.Verrazzano)
 	if !reflect.DeepEqual(getIstioIngressSettings(oldVZ), getIstioIngressSettings(newVZ)) {
 		r.Log.Infof("Istio Ingress has changed in Verrazzano resource %s/%s", oldVZ.Namespace, oldVZ.Name)
@@ -766,7 +765,6 @@ func (r *Reconciler) createIngressTraitReconcileRequests() []reconcile.Request {
 			},
 		})
 	}
-	r.Log.Infof("Requesting ingress trait reconcile: %v", requests)
 	return requests
 }
 
@@ -1114,43 +1112,40 @@ func buildAppFullyQualifiedHostName(cli client.Reader, trait *vzapi.IngressTrait
 //   dns-subdomain is The DNS subdomain name
 // For example: cars.example.com
 func buildNamespacedDomainName(cli client.Reader, trait *vzapi.IngressTrait) (string, error) {
-	const externalDNSKey = "external-dns.alpha.kubernetes.io/target"
-	const wildcardDomainKey = "verrazzano.io/dns.wildcard.domain"
-
-	// Extract the domain name from the Verrazzano ingress
-	ingress := k8net.Ingress{}
-	err := cli.Get(context.TODO(), types.NamespacedName{Name: constants.VzConsoleIngress, Namespace: constants.VerrazzanoSystemNamespace}, &ingress)
+	suffix, err := getDNSSuffix(cli)
 	if err != nil {
 		return "", err
 	}
-	externalDNSAnno, ok := ingress.Annotations[externalDNSKey]
-	if !ok || len(externalDNSAnno) == 0 {
-		return "", fmt.Errorf("Annotation %s missing from Verrazzano ingress, unable to generate DNS name", externalDNSKey)
+	return fmt.Sprintf("%s.%s", trait.Namespace, suffix), nil
+}
+
+func getDNSSuffix(cli client.Reader) (string, error) {
+	vzList := v1alpha1.VerrazzanoList{}
+	err := cli.List(context.TODO(), &vzList)
+	if err != nil {
+		return "", err
 	}
-
-	domain := externalDNSAnno[len(constants.VzConsoleIngress)+1:]
-
-	// Get the DNS wildcard domain from the annotation if it exist.  This annotation is only available
-	// when the install is using DNS type wildcard (nip.io, sslip.io, etc.)
-	suffix := ""
-	wildcardDomainAnno, ok := ingress.Annotations[wildcardDomainKey]
-	if ok {
-		suffix = wildcardDomainAnno
+	if len(vzList.Items) < 1 {
+		return "", errors.New("Verrazzano can not be found")
 	}
-
-	// Build the domain name using Istio info
-	if len(suffix) != 0 {
-		domain, err = buildDomainNameForWildcard(cli, trait, suffix)
+	vz := vzList.Items[0]
+	var dnsSuffix string
+	dnsConfig := vz.Spec.Components.DNS
+	if dnsConfig == nil || dnsConfig.Wildcard != nil {
+		ingressIP, err := getIstioIngressIP(cli)
 		if err != nil {
 			return "", err
 		}
+		dnsSuffix = fmt.Sprintf("%s.%s", ingressIP, getWildcardDomain(dnsConfig))
+	} else if dnsConfig.OCI != nil {
+		dnsSuffix = dnsConfig.OCI.DNSZoneName
+	} else if dnsConfig.External != nil {
+		dnsSuffix = dnsConfig.External.Suffix
 	}
-	return fmt.Sprintf("%s.%s", trait.Namespace, domain), nil
+	return dnsSuffix, nil
 }
 
-// buildDomainNameForWildcard generates a domain name in the format of "<IP>.<wildcard-domain>"
-// Get the IP from Istio resources
-func buildDomainNameForWildcard(cli client.Reader, trait *vzapi.IngressTrait, suffix string) (string, error) {
+func getIstioIngressIP(cli client.Reader) (string, error) {
 	const istioIngressGateway = "istio-ingressgateway"
 
 	istio := corev1.Service{}
@@ -1170,6 +1165,13 @@ func buildDomainNameForWildcard(cli client.Reader, trait *vzapi.IngressTrait, su
 	} else {
 		return "", fmt.Errorf("Unsupported service type %s for istio_ingress", string(istio.Spec.Type))
 	}
-	domain := IP + "." + suffix
-	return domain, nil
+	return IP, nil
+}
+
+func getWildcardDomain(dnsConfig *v1alpha1.DNSComponent) string {
+	wildcardDomain := defaultWildcardDomain
+	if dnsConfig != nil && dnsConfig.Wildcard != nil && len(dnsConfig.Wildcard.Domain) > 0 {
+		wildcardDomain = dnsConfig.Wildcard.Domain
+	}
+	return wildcardDomain
 }
