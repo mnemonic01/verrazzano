@@ -68,6 +68,7 @@ const (
 	destinationRuleKind       = "DestinationRule"
 	controllerName            = "ingresstrait"
 	httpsProtocol             = "HTTPS"
+	istioIngressGateway       = "istio-ingressgateway"
 )
 
 // The port names used by WebLogic operator that do not have http prefix.
@@ -732,7 +733,7 @@ func (r *Reconciler) isConsoleIngressUpdated(updateEvent event.UpdateEvent) bool
 // isIstioIngressGatewayUpdated Predicate func used by the watcher
 func (r *Reconciler) isIstioIngressGatewayUpdated(updateEvent event.UpdateEvent) bool {
 	oldSvc := updateEvent.ObjectOld.(*corev1.Service)
-	if oldSvc.Namespace != vzconst.IstioSystemNamespace || oldSvc.Name != "istio-ingressgateway" {
+	if oldSvc.Namespace != vzconst.IstioSystemNamespace || oldSvc.Name != istioIngressGateway {
 		return false
 	}
 	newSvc := updateEvent.ObjectNew.(*corev1.Service)
@@ -1147,8 +1148,6 @@ func buildNamespacedDomainName(cli client.Reader, trait *vzapi.IngressTrait) (st
 // buildDomainNameForWildcard generates a domain name in the format of "<IP>.<wildcard-domain>"
 // Get the IP from Istio resources
 func buildDomainNameForWildcard(cli client.Reader, trait *vzapi.IngressTrait, suffix string) (string, error) {
-	const istioIngressGateway = "istio-ingressgateway"
-
 	istio := corev1.Service{}
 	err := cli.Get(context.TODO(), types.NamespacedName{Name: istioIngressGateway, Namespace: constants.IstioSystemNamespace}, &istio)
 	if err != nil {

@@ -23,8 +23,8 @@ import (
 
 // Test_isConsoleIngressUpdated tests the isConsoleIngressUpdated func for the following use case.
 // GIVEN a request to isConsoleIngressUpdated
-// WHEN the only the Verrazzano Console ingress has changed
-// THEN true is returned only when the TLS fields differ, false otherwise
+// WHEN only the Verrazzano Console ingress has changed
+// THEN true is returned only when the Verrazzano Console ingress has changed, false otherwise
 func Test_isConsoleIngressUpdated(t *testing.T) {
 
 	asserts := assert.New(t)
@@ -81,6 +81,54 @@ func Test_isConsoleIngressUpdated(t *testing.T) {
 	}
 	newOtherIngress := oldIngress.DeepCopyObject().(*k8net.Ingress)
 	asserts.False(r.isConsoleIngressUpdated(event.UpdateEvent{
+		ObjectOld: oldOtherIngress,
+		ObjectNew: newOtherIngress,
+	}))
+}
+
+// Test_isIstioIngressGatewayUpdated tests the isIstioIngressGatewayUpdated func for the following use case.
+// GIVEN a request to isIstioIngressGatewayUpdated
+// WHEN only the IstioIngressGateway has changed
+// THEN true is returned only when the IstioIngressGateway has changed, false otherwise
+func Test_isIstioIngressGatewayUpdated(t *testing.T) {
+
+	asserts := assert.New(t)
+
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = vzapi.AddToScheme(scheme)
+	_ = vzoam.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	r := newIngressTraitReconciler(client)
+
+	oldSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: istioIngressGateway, Namespace: constants.IstioSystemNamespace},
+		Spec: corev1.ServiceSpec{
+			Type: "LoadBalancer",
+		},
+	}
+	newSvc := oldSvc.DeepCopyObject().(*corev1.Service)
+
+	asserts.False(r.isIstioIngressGatewayUpdated(event.UpdateEvent{
+		ObjectOld: oldSvc,
+		ObjectNew: newSvc,
+	}))
+
+	newSvc.Spec.Type = "NodePort"
+	asserts.True(r.isIstioIngressGatewayUpdated(event.UpdateEvent{
+		ObjectOld: oldSvc,
+		ObjectNew: newSvc,
+	}))
+
+	oldOtherIngress := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "somesvc", Namespace: constants.VerrazzanoSystemNamespace},
+		Spec: corev1.ServiceSpec{
+			Type: "LoadBalancer",
+		},
+	}
+	newOtherIngress := oldSvc.DeepCopyObject().(*corev1.Service)
+	asserts.False(r.isIstioIngressGatewayUpdated(event.UpdateEvent{
 		ObjectOld: oldOtherIngress,
 		ObjectNew: newOtherIngress,
 	}))
