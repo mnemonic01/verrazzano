@@ -15,8 +15,6 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
-
 	"github.com/verrazzano/verrazzano/pkg/test/ip"
 
 	"github.com/go-logr/logr"
@@ -31,6 +29,7 @@ import (
 	certapiv1 "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	asserts "github.com/stretchr/testify/assert"
 	vzapi "github.com/verrazzano/verrazzano/application-operator/apis/oam/v1alpha1"
+	"github.com/verrazzano/verrazzano/application-operator/constants"
 	"github.com/verrazzano/verrazzano/application-operator/mocks"
 	vzconst "github.com/verrazzano/verrazzano/pkg/constants"
 	"go.uber.org/zap"
@@ -72,6 +71,7 @@ var (
 	testClusterIP                        = ip.RandomIP()
 	testLoadBalancerIP                   = ip.RandomIP()
 	testLoadBalancerDomainName           = "myapp.myns." + testLoadBalancerIP + ".nip.io"
+	testLoadBalancerExternalDNSTarget    = "verrazzano-ingress." + testLoadBalancerIP + ".nip.io"
 	testLoadBalancerAppGatewayServerHost = "test-appconf.test-namespace." + testLoadBalancerIP + ".nip.io"
 	testExternalIP                       = ip.RandomIP()
 	testExternalDomainName               = "myapp.myns." + testExternalIP + ".nip.io"
@@ -374,11 +374,17 @@ func TestFailureCreateNewIngressWithSecretNoHosts(t *testing.T) {
 	mock := mocks.NewMockClient(mocker)
 	mockStatus := mocks.NewMockStatusWriter(mocker)
 
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{}
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "networking.k8s.io/v1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace:   name.Namespace,
+				Name:        name.Name,
+				Annotations: map[string]string{"external-dns.alpha.kubernetes.io/target": "verrazzano-ingress.my.host.com"}}
 			return nil
 		})
 	// Expect a call to get the ingress trait resource.
@@ -799,23 +805,17 @@ func TestBuildAppHostNameForDNS(t *testing.T) {
 			Labels:    map[string]string{oam.LabelAppName: "myapp"},
 		},
 	}
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{
-				{
-					Spec: v1alpha1.VerrazzanoSpec{
-						Components: v1alpha1.ComponentSpec{
-							DNS: &v1alpha1.DNSComponent{
-								External: &v1alpha1.External{
-									Suffix: "my.host.com",
-								},
-							},
-						},
-					},
-				},
-			}
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "networking.k8s.io/v1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace:   name.Namespace,
+				Name:        name.Name,
+				Annotations: map[string]string{"external-dns.alpha.kubernetes.io/target": "verrazzano-ingress.my.host.com"}}
 			return nil
 		})
 
@@ -854,23 +854,17 @@ func TestBuildAppHostNameIgnoreWildcardForDNS(t *testing.T) {
 		},
 	}
 
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{
-				{
-					Spec: v1alpha1.VerrazzanoSpec{
-						Components: v1alpha1.ComponentSpec{
-							DNS: &v1alpha1.DNSComponent{
-								External: &v1alpha1.External{
-									Suffix: "my.host.com",
-								},
-							},
-						},
-					},
-				},
-			}
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "networking.k8s.io/v1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace:   name.Namespace,
+				Name:        name.Name,
+				Annotations: map[string]string{"external-dns.alpha.kubernetes.io/target": "verrazzano-ingress.my.host.com"}}
 			return nil
 		})
 
@@ -881,6 +875,48 @@ func TestBuildAppHostNameIgnoreWildcardForDNS(t *testing.T) {
 	mocker.Finish()
 	assert.NoError(err)
 	assert.Equal("myapp.myns.my.host.com", domainName)
+}
+
+// TestFailureBuildAppHostNameForDNS tests failure of building a DNS hostname for the application
+// GIVEN an appName and a trait
+// WHEN the ingress domain is not nip.io and the Verrazzano annotation is missing
+// THEN ensure that an error is returned
+func TestFailureBuildAppHostNameForDNS(t *testing.T) {
+	assert := asserts.New(t)
+	mocker := gomock.NewController(t)
+	mock := mocks.NewMockClient(mocker)
+
+	ns := "myns"
+	trait := vzapi.IngressTrait{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: apiVersion,
+			Kind:       traitKind,
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: ns,
+			Labels:    map[string]string{oam.LabelAppName: "myapp"},
+		},
+	}
+	// Expect a call to get the Verrazzano ingress and return the ingress.
+	mock.EXPECT().
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "networking.k8s.io/v1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace: name.Namespace,
+				Name:      name.Name}
+			return nil
+		})
+
+	// Build the host name
+	_, err := buildAppFullyQualifiedHostName(mock, &trait)
+
+	// Validate the results
+	mocker.Finish()
+	assert.Error(err)
+	assert.Contains(err.Error(), "Annotation external-dns.alpha.kubernetes.io/target missing from Verrazzano ingress")
 }
 
 // TestBuildAppHostNameLoadBalancerNIP tests building a hostname for the application
@@ -902,21 +938,19 @@ func TestBuildAppHostNameLoadBalancerNIP(t *testing.T) {
 			Labels:    map[string]string{oam.LabelAppName: "myapp"},
 		},
 	}
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{
-				{
-					Spec: v1alpha1.VerrazzanoSpec{
-						Components: v1alpha1.ComponentSpec{
-							DNS: &v1alpha1.DNSComponent{
-								Wildcard: &v1alpha1.Wildcard{
-									Domain: "nip.io",
-								},
-							},
-						},
-					},
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "networking.k8s.io/v1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace: name.Namespace,
+				Name:      name.Name,
+				Annotations: map[string]string{
+					"external-dns.alpha.kubernetes.io/target": testLoadBalancerExternalDNSTarget,
+					"verrazzano.io/dns.wildcard.domain":       "nip.io",
 				},
 			}
 			return nil
@@ -963,21 +997,19 @@ func TestBuildAppHostNameExternalLoadBalancerNIP(t *testing.T) {
 			Labels:    map[string]string{oam.LabelAppName: "myapp"},
 		},
 	}
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{
-				{
-					Spec: v1alpha1.VerrazzanoSpec{
-						Components: v1alpha1.ComponentSpec{
-							DNS: &v1alpha1.DNSComponent{
-								Wildcard: &v1alpha1.Wildcard{
-									Domain: "nip.io",
-								},
-							},
-						},
-					},
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "extensions/v1beta1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace: name.Namespace,
+				Name:      name.Name,
+				Annotations: map[string]string{
+					"external-dns.alpha.kubernetes.io/target": testLoadBalancerExternalDNSTarget,
+					"verrazzano.io/dns.wildcard.domain":       "nip.io",
 				},
 			}
 			return nil
@@ -1022,21 +1054,19 @@ func TestBuildAppHostNameBothInternalAndExternalLoadBalancerNIP(t *testing.T) {
 			Labels:    map[string]string{oam.LabelAppName: "myapp"},
 		},
 	}
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{
-				{
-					Spec: v1alpha1.VerrazzanoSpec{
-						Components: v1alpha1.ComponentSpec{
-							DNS: &v1alpha1.DNSComponent{
-								Wildcard: &v1alpha1.Wildcard{
-									Domain: "nip.io",
-								},
-							},
-						},
-					},
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "extensions/v1beta1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace: name.Namespace,
+				Name:      name.Name,
+				Annotations: map[string]string{
+					"external-dns.alpha.kubernetes.io/target": testLoadBalancerExternalDNSTarget,
+					"verrazzano.io/dns.wildcard.domain":       "nip.io",
 				},
 			}
 			return nil
@@ -1084,21 +1114,19 @@ func TestBuildAppHostNameExternalLoadBalancerNIPNotFound(t *testing.T) {
 			Labels:    map[string]string{oam.LabelAppName: "myapp"},
 		},
 	}
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{
-				{
-					Spec: v1alpha1.VerrazzanoSpec{
-						Components: v1alpha1.ComponentSpec{
-							DNS: &v1alpha1.DNSComponent{
-								Wildcard: &v1alpha1.Wildcard{
-									Domain: "nip.io",
-								},
-							},
-						},
-					},
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "extensions/v1beta1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace: name.Namespace,
+				Name:      name.Name,
+				Annotations: map[string]string{
+					"external-dns.alpha.kubernetes.io/target": testLoadBalancerExternalDNSTarget,
+					"verrazzano.io/dns.wildcard.domain":       "nip.io",
 				},
 			}
 			return nil
@@ -1141,21 +1169,19 @@ func TestFailureBuildAppHostNameLoadBalancerNIP(t *testing.T) {
 			Labels:    map[string]string{oam.LabelAppName: "myapp"},
 		},
 	}
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{
-				{
-					Spec: v1alpha1.VerrazzanoSpec{
-						Components: v1alpha1.ComponentSpec{
-							DNS: &v1alpha1.DNSComponent{
-								Wildcard: &v1alpha1.Wildcard{
-									Domain: "nip.io",
-								},
-							},
-						},
-					},
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "networking.k8s.io/v1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace: name.Namespace,
+				Name:      name.Name,
+				Annotations: map[string]string{
+					"external-dns.alpha.kubernetes.io/target": testLoadBalancerExternalDNSTarget,
+					"verrazzano.io/dns.wildcard.domain":       "nip.io",
 				},
 			}
 			return nil
@@ -1199,21 +1225,19 @@ func TestBuildAppHostNameNodePortExternalIP(t *testing.T) {
 			Labels:    map[string]string{oam.LabelAppName: "myapp"},
 		},
 	}
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{
-				{
-					Spec: v1alpha1.VerrazzanoSpec{
-						Components: v1alpha1.ComponentSpec{
-							DNS: &v1alpha1.DNSComponent{
-								Wildcard: &v1alpha1.Wildcard{
-									Domain: "nip.io",
-								},
-							},
-						},
-					},
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "networking.k8s.io/v1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace: name.Namespace,
+				Name:      name.Name,
+				Annotations: map[string]string{
+					"external-dns.alpha.kubernetes.io/target": "verrazzano-ingress" + testExternalIP + ".nip.io",
+					"verrazzano.io/dns.wildcard.domain":       "nip.io",
 				},
 			}
 			return nil
@@ -1364,23 +1388,17 @@ func TestCreateHostsFromIngressTraitRuleWildcards(t *testing.T) {
 		},
 	}
 
-	// Expect a call to get the VerrazzanoList and return the Verrazzano.
+	// Expect a call to get the Verrazzano ingress and return the ingress.
 	mock.EXPECT().
-		List(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, list *v1alpha1.VerrazzanoList, opts ...client.ListOption) error {
-			list.Items = []v1alpha1.Verrazzano{
-				{
-					Spec: v1alpha1.VerrazzanoSpec{
-						Components: v1alpha1.ComponentSpec{
-							DNS: &v1alpha1.DNSComponent{
-								External: &v1alpha1.External{
-									Suffix: "my.host.com",
-								},
-							},
-						},
-					},
-				},
-			}
+		Get(gomock.Any(), types.NamespacedName{Namespace: constants.VerrazzanoSystemNamespace, Name: constants.VzConsoleIngress}, gomock.Not(gomock.Nil())).
+		DoAndReturn(func(ctx context.Context, name types.NamespacedName, ingress *k8net.Ingress) error {
+			ingress.TypeMeta = metav1.TypeMeta{
+				APIVersion: "networking.k8s.io/v1",
+				Kind:       "ingress"}
+			ingress.ObjectMeta = metav1.ObjectMeta{
+				Namespace:   name.Namespace,
+				Name:        name.Name,
+				Annotations: map[string]string{"external-dns.alpha.kubernetes.io/target": "verrazzano-ingress.my.host.com"}}
 			return nil
 		})
 
@@ -1866,7 +1884,7 @@ func TestSelectExistingServiceForVirtualServiceDestination(t *testing.T) {
 	// Create namespace
 	assert.NoError(createResourceFromTemplate(cli, "test/templates/managed_namespace.yaml", params))
 	// Create Verrazzano ingress
-	assert.NoError(cli.Create(context.Background(), newVerrazzanoCR()))
+	assert.NoError(cli.Create(context.Background(), newVerrazzanoIngress("verrazzano-ingress."+testLoadBalancerIP)))
 	// Create Istio ingress service
 	assert.NoError(cli.Create(context.Background(), newIstioLoadBalancerService(testClusterIP, testLoadBalancerIP)))
 	// Create application configuration
@@ -1966,7 +1984,7 @@ func TestExplicitServiceProvidedForVirtualServiceDestination(t *testing.T) {
 	// Create namespace
 	assert.NoError(createResourceFromTemplate(cli, "test/templates/managed_namespace.yaml", params))
 	// Create Verrazzano ingress
-	assert.NoError(cli.Create(context.Background(), newVerrazzanoCR()))
+	assert.NoError(cli.Create(context.Background(), newVerrazzanoIngress(testLoadBalancerIP)))
 	// Create Istio ingress service
 	assert.NoError(cli.Create(context.Background(), newIstioLoadBalancerService(testClusterIP, testLoadBalancerIP)))
 	// Create application configuration
@@ -2067,7 +2085,7 @@ func TestMultiplePortsOnDiscoveredService(t *testing.T) {
 	// Create namespace
 	assert.NoError(createResourceFromTemplate(cli, "test/templates/managed_namespace.yaml", params))
 	// Create Verrazzano ingress
-	assert.NoError(cli.Create(context.Background(), newVerrazzanoCR()))
+	assert.NoError(cli.Create(context.Background(), newVerrazzanoIngress(testLoadBalancerIP)))
 	// Create Istio ingress service
 	assert.NoError(cli.Create(context.Background(), newIstioLoadBalancerService(testClusterIP, testLoadBalancerIP)))
 	// Create application configuration
@@ -2178,7 +2196,7 @@ func TestMultipleServicesForNonWebLogicWorkloadWithoutExplicitIngressDestination
 	// Create namespace
 	assert.NoError(createResourceFromTemplate(cli, "test/templates/managed_namespace.yaml", params))
 	// Create Verrazzano ingress
-	assert.NoError(cli.Create(context.Background(), newVerrazzanoCR()))
+	assert.NoError(cli.Create(context.Background(), newVerrazzanoIngress(testLoadBalancerIP)))
 	// Create Istio ingress service
 	assert.NoError(cli.Create(context.Background(), newIstioLoadBalancerService(testClusterIP, testLoadBalancerIP)))
 	// Create application configuration
@@ -2303,7 +2321,7 @@ func TestSelectExistingServiceForVirtualServiceDestinationAfterRetry(t *testing.
 	// Create namespace
 	assert.NoError(createResourceFromTemplate(cli, "test/templates/managed_namespace.yaml", params))
 	// Create Verrazzano ingress
-	assert.NoError(cli.Create(context.Background(), newVerrazzanoCR()))
+	assert.NoError(cli.Create(context.Background(), newVerrazzanoIngress(testLoadBalancerIP)))
 	// Create Istio ingress service
 	assert.NoError(cli.Create(context.Background(), newIstioLoadBalancerService(testClusterIP, testLoadBalancerIP)))
 	// Create application configuration
@@ -2405,7 +2423,6 @@ func newScheme() *runtime.Scheme {
 	_ = k8net.AddToScheme(scheme)
 	_ = istioclient.AddToScheme(scheme)
 	_ = v1alpha2.SchemeBuilder.AddToScheme(scheme)
-	_ = v1alpha1.AddToScheme(scheme)
 
 	return scheme
 }
@@ -2456,20 +2473,19 @@ func appendAsUnstructured(list *unstructured.UnstructuredList, object interface{
 	return nil
 }
 
-// newVerrazzanoCR creates a new Ranger Ingress with the provided IP address.
-func newVerrazzanoCR() *v1alpha1.Verrazzano {
-	return &v1alpha1.Verrazzano{
-		ObjectMeta: metav1.ObjectMeta{Namespace: "foo", Name: "bar"},
-		Spec: v1alpha1.VerrazzanoSpec{
-			Components: v1alpha1.ComponentSpec{
-				DNS: &v1alpha1.DNSComponent{
-					Wildcard: &v1alpha1.Wildcard{
-						Domain: "nip.io",
-					},
-				},
+// newVerrazzanoIngress creates a new Ranger Ingress with the provided IP address.
+func newVerrazzanoIngress(ipAddress string) *k8net.Ingress {
+	rangerIngress := k8net.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      constants.VzConsoleIngress,
+			Namespace: constants.VerrazzanoSystemNamespace,
+			Annotations: map[string]string{
+				"external-dns.alpha.kubernetes.io/target": fmt.Sprintf("verrazzano-ingress.default.%s.nip.io", ipAddress),
+				"verrazzano.io/dns.wildcard.domain":       "nip.io",
 			},
 		},
 	}
+	return &rangerIngress
 }
 
 // newIstioLoadBalancerService creates a new Istio LoadBalancer Service with the provided
