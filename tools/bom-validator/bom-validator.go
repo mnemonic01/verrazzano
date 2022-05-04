@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	vzstring "github.com/verrazzano/verrazzano/pkg/string"
 )
 
 const tagLen = 10                                                          // The number of unique tags for a specific image
@@ -41,6 +43,11 @@ type imageError struct {
 }
 
 var ignoreSubComponents = []string{}
+
+// Hack to work around an issue with the 1.2 upgrade; Rancher does not always update the webhook image
+var additionalImageWorkarounds = map[string][]string{
+	"rancher-webhook": {"v0.1.2"},
+}
 
 func main() {
 	var vBom verrazzanoBom                                // BOM from platform operator in struct form
@@ -172,7 +179,10 @@ func validateBOM(vBom *verrazzanoBom, clusterImageMap map[string][tagLen]string,
 				if tags, ok := clusterImageMap[image.Image]; ok {
 					var tagFound bool = false
 					for _, tag := range tags {
-						if tag == image.Tag {
+						// Workaround for Rancher additional images; Rancher does not always update to the latest version
+						// in the BOM file, if their minimum-version requirements are met by what's deployed at upgrade time
+						additionalSupportedTags, checkWorkarounds := additionalImageWorkarounds[image.Image]
+						if tag == image.Tag || (checkWorkarounds && vzstring.SliceContainsString(additionalSupportedTags, tag)) {
 							tagFound = true
 							break
 						}
