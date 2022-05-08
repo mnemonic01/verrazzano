@@ -101,7 +101,7 @@ func (r *VerrazzanoConfigMapsReconciler) reconcileHelmOverrideConfigMap(ctx cont
 func (r *VerrazzanoConfigMapsReconciler) updateVerrazzanoForHelmOverrides(componentCtx spi.ComponentContext, componentName string) error {
 	cr := componentCtx.ActualCR()
 	_, err := controllerutil.CreateOrUpdate(context.TODO(), r.Client, cr, func() error {
-		cr.Status.Components[componentName].LastReconciledGeneration = 0
+		cr.Status.Components[componentName].ReconcilingGeneration = 1
 		return nil
 	})
 
