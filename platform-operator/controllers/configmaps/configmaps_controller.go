@@ -101,16 +101,11 @@ func (r *VerrazzanoConfigMapsReconciler) reconcileHelmOverrideConfigMap(ctx cont
 func (r *VerrazzanoConfigMapsReconciler) updateVerrazzanoForHelmOverrides(componentCtx spi.ComponentContext, componentName string) error {
 	cr := componentCtx.ActualCR()
 	res, err := controllerutil.CreateOrUpdate(context.TODO(), r.Client, cr, func() error {
-		componentStatus := cr.Status.Components[componentName]
-		if componentStatus == nil {
-			componentStatus = &installv1alpha1.ComponentStatusDetails{
-				Name: componentName,
-			}
+		if cr.Spec.Components.PrometheusOperator.Enabled == nil || *cr.Spec.Components.PrometheusOperator.Enabled == false {
+			*cr.Spec.Components.PrometheusOperator.Enabled = true
+		} else {
+			*cr.Spec.Components.PrometheusOperator.Enabled = false
 		}
-		componentStatus.ReconcilingGeneration = 0
-		componentStatus.LastReconciledGeneration = 0
-		componentStatus.State = installv1alpha1.CompStateReady
-		cr.Status.Components[componentName] = componentStatus
 		return nil
 	})
 
