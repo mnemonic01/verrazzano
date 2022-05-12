@@ -396,6 +396,12 @@ pipeline {
                         }
                     }
                 }
+                stage("Update external OpenSearch") {
+                    when { expression { return params.EXTERNAL_ELASTICSEARCH == true } }
+                    steps {
+                        runGinkgoAdmin('update/fluentdextes')
+                    }
+                }
                 stage ('Register managed clusters') {
                     steps {
                         registerManagedClusters()
@@ -1086,6 +1092,16 @@ def runGinkgoRandomizeAdmin(testSuitePath) {
         export CLUSTER_NAME="admin"
         cd ${GO_REPO_PATH}/verrazzano/tests/e2e
         ginkgo -p --randomize-all -v --keep-going --no-color -tags="${params.TAGGED_TESTS}" --focus-file="${params.INCLUDED_TESTS}" --skip-file="${params.EXCLUDED_TESTS}" ${testSuitePath}/...
+    """
+}
+
+// Run a test suite against just the admin cluster
+def runGinkgoAdmin(testSuitePath) {
+    sh """
+        export KUBECONFIG="${KUBECONFIG_DIR}/1/kube_config"
+        export CLUSTER_NAME="admin"
+        cd ${GO_REPO_PATH}/verrazzano/tests/e2e
+        ginkgo -v --keep-going --no-color ${GINKGO_REPORT_ARGS} -tags="${params.TAGGED_TESTS}" --focus-file="${params.INCLUDED_TESTS}" --skip-file="${params.EXCLUDED_TESTS}" ${testSuitePath}/...
     """
 }
 
