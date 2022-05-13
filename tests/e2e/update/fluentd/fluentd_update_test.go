@@ -29,9 +29,9 @@ var (
 var _ = t.AfterSuite(func() {
 	pkg.DeleteSecret(pcons.VerrazzanoInstallNamespace, extEsSec)
 	pkg.DeleteSecret(pcons.VerrazzanoInstallNamespace, wrongSec)
-	m := FluentdModifier{Component: vzapi.FluentdComponent{}}
-	ValidateUpdate(m, "")
-	ValidateDaemonset(pkg.VmiESURL, pkg.VmiESInternalSecret, "")
+	//m := FluentdModifier{Component: vzapi.FluentdComponent{}}
+	//ValidateUpdate(m, "")
+	//ValidateDaemonset(pkg.VmiESURL, pkg.VmiESInternalSecret, "")
 })
 
 var _ = t.Describe("Update Fluentd", Label("f:platform-lcm.update"), func() {
@@ -85,6 +85,25 @@ var _ = t.Describe("Update Fluentd", Label("f:platform-lcm.update"), func() {
 			ValidateUpdate(m, "")
 			ValidateDaemonset("", "", ociLgSec)
 			ValidateConfigMap(sysLogID, defLogID)
+		})
+	})
+
+	t.Describe("Validate extra Volume Mounts", Label("f:platform-lcm.fluentd-update-validation"), func() {
+		t.It("extraVolumeMounts validation", func() {
+			m := FluentdModifier{Component: vzapi.FluentdComponent{
+				ExtraVolumeMounts: []vzapi.VolumeMount{{Source: "/var/log"}},
+			}}
+			ValidateUpdate(m, "duplicate mount path found")
+		})
+	})
+
+	t.Describe("Update extraVolumeMounts", Label("f:platform-lcm.fluentd-extra-volume-mounts"), func() {
+		t.It("extraVolumeMounts", func() {
+			m := FluentdModifier{Component: vzapi.FluentdComponent{
+				ExtraVolumeMounts: []vzapi.VolumeMount{{Source: "/var/log", Destination: "/home/varLog"}},
+			}}
+			ValidateUpdate(m, "")
+			ValidateDaemonset(pkg.VmiESURL, pkg.VmiESInternalSecret, "")
 		})
 	})
 })

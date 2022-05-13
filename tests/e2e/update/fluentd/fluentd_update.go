@@ -66,6 +66,7 @@ type FluentdModifier struct {
 //}
 
 func (u FluentdModifier) ModifyCR(cr *vzapi.Verrazzano) {
+	fmt.Printf("~~~~ using \n%v\n \n%v\n", u.Component, &u.Component)
 	cr.Spec.Components.Fluentd = &u.Component
 }
 
@@ -75,6 +76,7 @@ func ValidateUpdate(m update.CRModifier, expectedError string) {
 		if err != nil {
 			pkg.Log(pkg.Info, fmt.Sprintf("Update error: %v", err))
 		}
+		fmt.Printf("Update error: %v\n", err)
 		if expectedError == "" {
 			return err == nil
 		}
