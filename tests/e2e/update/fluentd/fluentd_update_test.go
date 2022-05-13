@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	"github.com/verrazzano/verrazzano/pkg/test/framework"
+	vzapi "github.com/verrazzano/verrazzano/platform-operator/apis/verrazzano/v1alpha1"
 	pcons "github.com/verrazzano/verrazzano/platform-operator/constants"
 	"github.com/verrazzano/verrazzano/tests/e2e/pkg"
 )
@@ -28,7 +29,7 @@ var (
 var _ = t.AfterSuite(func() {
 	pkg.DeleteSecret(pcons.VerrazzanoInstallNamespace, extEsSec)
 	pkg.DeleteSecret(pcons.VerrazzanoInstallNamespace, wrongSec)
-	m := FluentdDefaultModifier{}
+	m := FluentdModifier{Component: vzapi.FluentdComponent{}}
 	ValidateUpdate(m, "")
 	ValidateDaemonset(pkg.VmiESURL, pkg.VmiESInternalSecret, "")
 })
@@ -42,7 +43,10 @@ var _ = t.Describe("Update Fluentd", Label("f:platform-lcm.update"), func() {
 
 	t.Describe("Validate external Opensearch config", Label("f:platform-lcm.fluentd-update-validation"), func() {
 		t.It("secret validation", func() {
-			m := FluentdExtLogCollectorModifier{ExtLogCollectorSec: extEsSec + "missing", ExtLogCollectorURL: opensearchURL}
+			m := FluentdModifier{Component: vzapi.FluentdComponent{
+				ElasticsearchSecret: extEsSec + "missing",
+				ElasticsearchURL:    opensearchURL,
+			}}
 			ValidateUpdate(m, "must be created")
 		})
 	})
@@ -50,7 +54,10 @@ var _ = t.Describe("Update Fluentd", Label("f:platform-lcm.update"), func() {
 	t.Describe("Update external Opensearch", Label("f:platform-lcm.fluentd-external-opensearch"), func() {
 		t.It("external Opensearch", func() {
 			pkg.CreateCredentialsSecret(pcons.VerrazzanoInstallNamespace, extEsSec, "user", "pw", map[string]string{})
-			m := FluentdExtLogCollectorModifier{ExtLogCollectorSec: extEsSec, ExtLogCollectorURL: opensearchURL}
+			m := FluentdModifier{Component: vzapi.FluentdComponent{
+				ElasticsearchSecret: extEsSec,
+				ElasticsearchURL:    opensearchURL,
+			}}
 			ValidateUpdate(m, "")
 			ValidateDaemonset(opensearchURL, extEsSec, "")
 		})
@@ -58,7 +65,9 @@ var _ = t.Describe("Update Fluentd", Label("f:platform-lcm.update"), func() {
 
 	t.Describe("Validate OCI logging config", Label("f:platform-lcm.fluentd-update-validation"), func() {
 		t.It("secret validation", func() {
-			m := FluentdOciLoggingModifier{APISec: wrongSec}
+			m := FluentdModifier{Component: vzapi.FluentdComponent{
+				OCI: &vzapi.OciLoggingConfiguration{APISecret: wrongSec},
+			}}
 			ValidateUpdate(m, "must be created")
 			pkg.CreateCredentialsSecret(pcons.VerrazzanoInstallNamespace, wrongSec, "api", "pw", map[string]string{})
 			ValidateUpdate(m, "Did not find OCI configuration")
@@ -68,7 +77,11 @@ var _ = t.Describe("Update Fluentd", Label("f:platform-lcm.update"), func() {
 	t.Describe("Update OCI logging", Label("f:platform-lcm.fluentd-oci-logging"), func() {
 		t.It(" OCI logging", func() {
 			createOciLoggingSecret(ociLgSec)
-			m := FluentdOciLoggingModifier{APISec: ociLgSec, SystemLog: sysLogID, DefaultLog: defLogID}
+			m := FluentdModifier{Component: vzapi.FluentdComponent{OCI: &vzapi.OciLoggingConfiguration{
+				APISecret:       ociLgSec,
+				SystemLogID:     sysLogID,
+				DefaultAppLogID: defLogID,
+			}}}
 			ValidateUpdate(m, "")
 			ValidateDaemonset("", "", ociLgSec)
 			ValidateConfigMap(sysLogID, defLogID)

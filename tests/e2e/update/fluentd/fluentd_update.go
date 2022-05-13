@@ -33,39 +33,40 @@ const (
 	pollingInterval = 5 * time.Second
 )
 
-type FluentdExtLogCollectorModifier struct {
-	ExtLogCollectorSec string
-	ExtLogCollectorURL string
+//type FluentdExtLogCollectorModifier struct {
+//	ExtLogCollectorSec string
+//	ExtLogCollectorURL string
+//}
+//
+//type FluentdOciLoggingModifier struct {
+//	APISec     string
+//	DefaultLog string
+//	SystemLog  string
+//}
+
+type FluentdModifier struct {
+	Component vzapi.FluentdComponent
 }
 
-type FluentdOciLoggingModifier struct {
-	APISec     string
-	DefaultLog string
-	SystemLog  string
-}
+//func (u FluentdExtLogCollectorModifier) ModifyCR(cr *vzapi.Verrazzano) {
+//	cr.Spec.Components.Fluentd = &vzapi.FluentdComponent{
+//		ElasticsearchSecret: u.ExtLogCollectorSec,
+//		ElasticsearchURL:    u.ExtLogCollectorURL,
+//	}
+//}
+//
+//func (u FluentdOciLoggingModifier) ModifyCR(cr *vzapi.Verrazzano) {
+//	cr.Spec.Components.Fluentd = &vzapi.FluentdComponent{
+//		OCI: &vzapi.OciLoggingConfiguration{
+//			DefaultAppLogID: u.DefaultLog,
+//			SystemLogID:     u.SystemLog,
+//			APISecret:       u.APISec,
+//		},
+//	}
+//}
 
-type FluentdDefaultModifier struct {
-}
-
-func (u FluentdExtLogCollectorModifier) ModifyCR(cr *vzapi.Verrazzano) {
-	cr.Spec.Components.Fluentd = &vzapi.FluentdComponent{
-		ElasticsearchSecret: u.ExtLogCollectorSec,
-		ElasticsearchURL:    u.ExtLogCollectorURL,
-	}
-}
-
-func (u FluentdOciLoggingModifier) ModifyCR(cr *vzapi.Verrazzano) {
-	cr.Spec.Components.Fluentd = &vzapi.FluentdComponent{
-		OCI: &vzapi.OciLoggingConfiguration{
-			DefaultAppLogID: u.DefaultLog,
-			SystemLogID:     u.SystemLog,
-			APISecret:       u.APISec,
-		},
-	}
-}
-
-func (u FluentdDefaultModifier) ModifyCR(cr *vzapi.Verrazzano) {
-	cr.Spec.Components.Fluentd = &vzapi.FluentdComponent{}
+func (u FluentdModifier) ModifyCR(cr *vzapi.Verrazzano) {
+	cr.Spec.Components.Fluentd = &u.Component
 }
 
 func ValidateUpdate(m update.CRModifier, expectedError string) {
